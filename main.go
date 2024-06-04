@@ -27,8 +27,8 @@ type CPUUsage struct {
 }
 
 type CPUCore struct {
-	Node int
-	HTID int
+	Node  int
+	HTID  int
 	Usage CPUUsage
 }
 
@@ -242,8 +242,8 @@ func main() {
 	flag.DurationVar(&interval, "interval", 100*time.Millisecond, "Update interval")
 	flag.StringVar(&host, "host", "0.0.0.0", "Host address")
 	flag.StringVar(&port, "port", "8080", "Port number")
-	flag.IntVar(&historyLength, "history", 256, "History length")
-	flag.IntVar(&rectSize, "rectsize", 8, "Rectangle size")
+	flag.IntVar(&historyLength, "history", 150, "History length")
+	flag.IntVar(&rectSize, "rectsize", 9, "Rectangle size")
 	flag.Parse()
 
 	err := getCPUInfo()
@@ -251,7 +251,7 @@ func main() {
 		fmt.Println("Error reading CPU info:", err)
 		return
 	}
-	
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		intervalMsec := interval.Milliseconds()
 		fmt.Fprintf(w, htmlContent, rectSize, historyLength, intervalMsec)
@@ -271,11 +271,11 @@ const htmlContent = `
     <title>CPU Load Monitor</title>
     <style>
         body {
-            background-color: black;
+            background-color: #16273f;
         }
         canvas {
-            border: 1px solid black;
-            background-color: black;
+            border: 1px solid #16273f;
+            background-color: #16273f;
         }
     </style>
 </head>
@@ -425,7 +425,7 @@ const htmlContent = `
                             const x = 2;
                             const y = Math.round(yOffset + rectSize - 2);
                             if (value) {
-                                offScreenCtx.fillStyle = 'white';
+                                offScreenCtx.fillStyle = '#FFFFFF';
                                 try {
                                     offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
                                 } catch (e) {
