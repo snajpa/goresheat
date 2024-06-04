@@ -260,11 +260,11 @@ func main() {
 	http.HandleFunc("/history", handleHistory)
 	go broadcastUsage()
 	address := fmt.Sprintf("%s:%s", host, port)
+	fmt.Println("Listening on", address)
 	http.ListenAndServe(address, nil)
 }
 
-const htmlContent = `
-<!DOCTYPE html>
+const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -272,10 +272,15 @@ const htmlContent = `
     <style>
         body {
             background-color: #16273f;
+            margin: 0;
+            overflow: hidden; /* Prevent scrolling */
         }
         canvas {
             border: 1px solid #16273f;
             background-color: #16273f;
+            position: fixed; /* Fix the canvas position */
+            top: 0;
+            left: 0;
         }
     </style>
 </head>
@@ -286,19 +291,23 @@ const htmlContent = `
             const socket = new WebSocket('ws://' + window.location.host + '/ws');
             const canvas = document.getElementById('cpuCanvas');
             const ctx = canvas.getContext('2d');
-            const rectSize = %d; // Size of each rectangle
-            const historyLength = %d; // Number of rows to display at a time
+            const rectSize = %d;
+            const historyLength = %d;
             const timeWidth = rectSize * 9; // Width allocated for the time labels
-            const dataInterval = %d; // Default interval in milliseconds
-            const slackInterval = dataInterval / 2; // Allow for half the interval as slack
+            const dataInterval = %d;
+            const timerSlack = dataInterval * 0.2; // Slack interval in milliseconds
+            const slackInterval = dataInterval - timerSlack; // Interval considering slack
+            const maxHistoryLength = historyLength; // Maximum length of the history array
             let history = [];
             let isPaused = false;
             let scrollOffset = 0;
             let animationFrameId;
             let lastUpdateTime = performance.now();
-            const scrollSpeed = rectSize / (dataInterval / 1000); // Scroll speed calculation
-            const blankLine = new Array(historyLength).fill("0");
+            const scrollSpeed = rectSize / dataInterval; // Scroll speed calculation
             let dataQueue = []; // Queue to buffer incoming data points
+            let lastDataTimestamp = performance.now(); // Timestamp of the last data row
+            let targetRedrawInterval = dataInterval; // Start with the default interval
+            let redrawStartTime;
 
             function fetchHistory() {
                 fetch('/history')
@@ -311,6 +320,9 @@ const htmlContent = `
                                 history.push(row.split(','));
                             }
                         });
+                        if (history.length > maxHistoryLength) {
+                            history = history.slice(0, maxHistoryLength);
+                        }
                         updateCanvasDimensions();
                         draw();
                     })
@@ -320,27 +332,24 @@ const htmlContent = `
             }
 
             function refillMissingLines() {
-                // Check for blank lines and fetch history to fill them
-                const missingIndices = [];
+                const duplicateIndices = [];
                 history.forEach((line, index) => {
-                    if (line[0] === "0") {
-                        missingIndices.push(index);
+                    if (index > 0 && line.join() === history[index - 1].join()) {
+                        duplicateIndices.push(index);
                     }
                 });
 
-                if (missingIndices.length > 0) {
+                if (duplicateIndices.length > 0) {
                     fetch('/history')
                         .then(response => response.text())
                         .then(data => {
-                            const newHistory = [];
-                            data.split('\n').forEach(row => {
-                                row = row.trim();
-                                if (row) {
-                                    newHistory.push(row.split(','));
-                                }
-                            });
-                            missingIndices.forEach(index => {
-                                if (newHistory[index]) {
+                            const newHistory = data.split('\n')
+                                .map(row => row.trim())
+                                .filter(row => row)
+                                .map(row => row.split(','));
+                            
+                            duplicateIndices.forEach(index => {
+                                if (newHistory.length > index) {
                                     history[index] = newHistory[index];
                                 }
                             });
@@ -379,21 +388,21 @@ const htmlContent = `
             function draw() {
                 if (history.length === 0) return;
 
-                const now = performance.now();
-                const elapsed = now - lastUpdateTime;
-                lastUpdateTime = now;
+                redrawStartTime = performance.now();
+                const elapsed = redrawStartTime - lastUpdateTime;
+                lastUpdateTime = redrawStartTime;
 
-                scrollOffset += (scrollSpeed * elapsed) / 1000;
+                scrollOffset += (scrollSpeed * elapsed);
 
                 if (scrollOffset >= rectSize) {
                     scrollOffset -= rectSize;
 
-                    // Check if there's data in the queue
                     if (dataQueue.length > 0) {
                         const newData = dataQueue.shift();
                         history.unshift(newData);
                     } else {
-                        history.unshift(blankLine.slice());
+                        const lastRow = history.length > 0 ? history[0].slice() : blankLine.slice();
+                        history.unshift(lastRow);
                     }
 
                     if (history.length > historyLength) {
@@ -407,7 +416,7 @@ const htmlContent = `
                 const offScreenCtx = offScreenCanvas.getContext('2d');
 
                 offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
-                offScreenCtx.font = (rectSize)+'px monospace';
+                offScreenCtx.font = (rectSize) + 'px monospace';
 
                 const startRow = Math.max(0, history.length - historyLength);
                 const displayedHistory = history.slice(startRow, history.length);
@@ -452,8 +461,30 @@ const htmlContent = `
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(offScreenCanvas, 0, 0);
 
+                const redrawTime = performance.now() - redrawStartTime;
+                if (redrawTime > targetRedrawInterval) {
+                    targetRedrawInterval = redrawTime * 1.5; // Increase the interval more aggressively
+                } else {
+                    targetRedrawInterval = targetRedrawInterval * 0.8 + redrawTime * 0.2; // Adjust down more smoothly
+                }
+
                 if (!isPaused) {
-                    animationFrameId = requestAnimationFrame(draw);
+                    setTimeout(() => {
+                        animationFrameId = requestAnimationFrame(draw);
+                    }, targetRedrawInterval);
+                }
+            }
+
+            function handleVisibilityChange() {
+                if (document.visibilityState === 'visible') {
+                    fetchHistory();
+                    lastUpdateTime = performance.now();
+                    scrollOffset = 0;
+                    if (!isPaused) {
+                        animationFrameId = requestAnimationFrame(draw);
+                    }
+                } else {
+                    cancelAnimationFrame(animationFrameId);
                 }
             }
 
@@ -461,7 +492,7 @@ const htmlContent = `
                 isPaused = !isPaused;
                 console.log("Paused:", isPaused);
                 if (!isPaused) {
-                    fetchHistory(); // Refresh history on unpause
+                    fetchHistory();
                     lastUpdateTime = performance.now();
                     animationFrameId = requestAnimationFrame(draw);
                 } else {
@@ -470,16 +501,26 @@ const htmlContent = `
             }
 
             function refreshHistoryPeriodically() {
-                setInterval(fetchHistory, 60000); // Refresh history every 60 seconds
+                setInterval(fetchHistory, 60000);
+            }
+
+            function clearDataQueuePeriodically() {
+                setInterval(() => {
+                    if (dataQueue.length > maxHistoryLength) {
+                        dataQueue = dataQueue.slice(-maxHistoryLength);
+                    }
+                }, 60000); // Clear the data queue every 60 seconds
             }
 
             document.addEventListener("keydown", togglePause);
             canvas.addEventListener("click", togglePause);
+            document.addEventListener("visibilitychange", handleVisibilityChange);
 
             updateCanvasDimensions();
             fetchHistory();
             refreshHistoryPeriodically();
-            setInterval(refillMissingLines, dataInterval); // Check and refill missing lines periodically
+            clearDataQueuePeriodically();
+            setInterval(refillMissingLines, dataInterval);
 
             socket.onopen = function() {
                 console.log('WebSocket connection opened.');
@@ -487,8 +528,14 @@ const htmlContent = `
 
             socket.onmessage = function(event) {
                 if (isPaused) return;
+
+                const now = performance.now();
                 const data = event.data.split(",");
-                dataQueue.push(data);
+
+                if (now - lastDataTimestamp >= slackInterval) {
+                    dataQueue.push(data);
+                    lastDataTimestamp = now;
+                }
             };
 
             socket.onerror = function(error) {
