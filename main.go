@@ -309,6 +309,9 @@ const htmlContent = `<!DOCTYPE html>
             let targetRedrawInterval = dataInterval; // Start with the default interval
             let redrawStartTime;
 
+            const offScreenCanvas = document.createElement('canvas');
+            const offScreenCtx = offScreenCanvas.getContext('2d');
+
             function fetchHistory() {
                 fetch('/history')
                     .then(response => response.text())
@@ -331,39 +334,12 @@ const htmlContent = `<!DOCTYPE html>
                     });
             }
 
-            function refillMissingLines() {
-                const duplicateIndices = [];
-                history.forEach((line, index) => {
-                    if (index > 0 && line.join() === history[index - 1].join()) {
-                        duplicateIndices.push(index);
-                    }
-                });
-
-                if (duplicateIndices.length > 0) {
-                    fetch('/history')
-                        .then(response => response.text())
-                        .then(data => {
-                            const newHistory = data.split('\n')
-                                .map(row => row.trim())
-                                .filter(row => row)
-                                .map(row => row.split(','));
-                            
-                            duplicateIndices.forEach(index => {
-                                if (newHistory.length > index) {
-                                    history[index] = newHistory[index];
-                                }
-                            });
-                        })
-                        .catch(error => {
-                            console.error('Refilling missing lines failed:', error);
-                        });
-                }
-            }
-
             function updateCanvasDimensions() {
                 if (history.length > 0) {
                     canvas.width = (history[0].length - 2) * rectSize + timeWidth;
                     canvas.height = historyLength * rectSize;
+                    offScreenCanvas.width = canvas.width;
+                    offScreenCanvas.height = canvas.height;
                 }
             }
 
@@ -401,7 +377,7 @@ const htmlContent = `<!DOCTYPE html>
                         const newData = dataQueue.shift();
                         history.unshift(newData);
                     } else {
-                        const lastRow = history.length > 0 ? history[0].slice() : blankLine.slice();
+                        const lastRow = history.length > 0 ? history[0].slice() : [];
                         history.unshift(lastRow);
                     }
 
@@ -410,20 +386,18 @@ const htmlContent = `<!DOCTYPE html>
                     }
                 }
 
-                const offScreenCanvas = document.createElement('canvas');
-                offScreenCanvas.width = canvas.width;
-                offScreenCanvas.height = canvas.height;
-                const offScreenCtx = offScreenCanvas.getContext('2d');
-
                 offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
                 offScreenCtx.font = (rectSize) + 'px monospace';
 
                 const startRow = Math.max(0, history.length - historyLength);
                 const displayedHistory = history.slice(startRow, history.length);
 
+                offScreenCtx.save();
+                offScreenCtx.translate(0, Math.floor(scrollOffset));
+
                 displayedHistory.forEach((data, row) => {
                     let coreIndex = 0;
-                    const yOffset = Math.round(row * rectSize + scrollOffset);
+                    const yOffset = Math.floor(row * rectSize);
 
                     if (yOffset + rectSize <= 0 || yOffset >= canvas.height) {
                         return;
@@ -432,7 +406,7 @@ const htmlContent = `<!DOCTYPE html>
                     data.forEach((value, col) => {
                         if (col === 0) {
                             const x = 2;
-                            const y = Math.round(yOffset + rectSize - 2);
+                            const y = Math.floor(yOffset + rectSize - 2);
                             if (value) {
                                 offScreenCtx.fillStyle = '#FFFFFF';
                                 try {
@@ -448,8 +422,8 @@ const htmlContent = `<!DOCTYPE html>
                                 coreIndex++;
                                 return;
                             }
-                            const x = Math.round(coreIndex * rectSize + timeWidth);
-                            const y = Math.round(yOffset);
+                            const x = Math.floor(coreIndex * rectSize + timeWidth);
+                            const y = Math.floor(yOffset);
                             let color = getFlameColor(parseFloat(value));
                             offScreenCtx.fillStyle = color;
                             offScreenCtx.fillRect(x, y, rectSize, rectSize);
@@ -457,6 +431,8 @@ const htmlContent = `<!DOCTYPE html>
                         }
                     });
                 });
+
+                offScreenCtx.restore();
 
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(offScreenCanvas, 0, 0);
@@ -520,7 +496,6 @@ const htmlContent = `<!DOCTYPE html>
             fetchHistory();
             refreshHistoryPeriodically();
             clearDataQueuePeriodically();
-            setInterval(refillMissingLines, dataInterval);
 
             socket.onopen = function() {
                 console.log('WebSocket connection opened.');
@@ -529,12 +504,9 @@ const htmlContent = `<!DOCTYPE html>
             socket.onmessage = function(event) {
                 if (isPaused) return;
 
-                const now = performance.now();
                 const data = event.data.split(",");
-
-                if (now - lastDataTimestamp >= slackInterval) {
+                if (data.length > 0) {
                     dataQueue.push(data);
-                    lastDataTimestamp = now;
                 }
             };
 
