@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CPU Load Monitor</title>
+    <style>
+        body {
+            background-color: #16273f;
+            margin: 0;
+            overflow: hidden; /* Prevent scrolling */
+        }
+        canvas {
+            border: 1px solid #16273f;
+            background-color: #16273f;
+            position: fixed; /* Fix the canvas position */
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="cpuCanvas"></canvas>
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            const socket = new WebSocket('ws://' + window.location.host + '/ws');
+            const canvas = document.getElementById('cpuCanvas');
+            const ctx = canvas.getContext('2d');
+            const rectSize = %d;
+            const historyLength = %d;
+            const timeWidth = rectSize * 9; // Width allocated for the time labels
+            const dataInterval = %d;
+            const maxHistoryLength = historyLength; // Maximum length of the history array
+            let history = [];
+            let isPaused = false;
+            let scrollOffset = 0;
+            let animationFrameId;
+            let lastUpdateTime = performance.now();
+            const scrollSpeed = rectSize / dataInterval; // Scroll speed calculation
+            let dataQueue = []; // Queue to buffer incoming data points
+            let lastDataTimestamp = performance.now(); // Timestamp of the last data row
+            let redrawStartTime;
+
+            const offScreenCanvas = document.createElement('canvas');
+            const offScreenCtx = offScreenCanvas.getContext('2d');
+
+            function fetchHistory() {
+                return fetch('/history')
+                    .then(response => response.text())
+                    .then(data => {
+                        history = [];
+                        data.split('\n').forEach(row => {
+                            row = row.trim();
+                            if (row) {
+                                history.push(row.split(','));
+                            }
+                        });
+                        if (history.length > maxHistoryLength) {
+                            history = history.slice(0, maxHistoryLength);
+                        }
+                        updateCanvasDimensions();
+                    })
+                    .catch(error => {
+                        console.error('Fetching history failed:', error);
+                    });
+            }
+
+            function updateCanvasDimensions() {
+                if (history.length > 0) {
+                    canvas.width = (history[0].length - 2) * rectSize + timeWidth;
+                    canvas.height = historyLength * rectSize;
+                    offScreenCanvas.width = canvas.width;
+                    offScreenCanvas.height = canvas.height;
+                }
+            }
+
+            function getFlameColor(percentage) {
+                if (percentage <= 5) {
+                    return 'rgb(0,0,0)';
+                } else if (percentage <= 20) {
+                    return 'rgb(50,20,0)';
+                } else if (percentage <= 40) {
+                    return 'rgb(139,0,0)';
+                } else if (percentage <= 60) {
+                    return 'rgb(255,69,0)';
+                } else if (percentage <= 80) {
+                    return 'rgb(255,140,0)';
+                } else if (percentage <= 95) {
+                    return 'rgb(255,255,0)';
+                } else {
+                    return 'rgb(255,255,255)';
+                }
+            }
+
+            function draw() {
+                if (history.length === 0) return;
+
+                redrawStartTime = performance.now();
+                const elapsed = redrawStartTime - lastUpdateTime;
+                lastUpdateTime = redrawStartTime;
+
+                scrollOffset += (scrollSpeed * elapsed);
+
+                if (scrollOffset >= rectSize) {
+                    scrollOffset -= rectSize;
+
+                    if (dataQueue.length > 0) {
+                        const newData = dataQueue.shift();
+                        history.unshift(newData);
+                    } else {
+                        const lastRow = history.length > 0 ? history[0].slice() : [];
+                        history.unshift(lastRow);
+                    }
+
+                    if (history.length > historyLength) {
+                        history.pop();
+                    }
+                }
+
+                offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
+                offScreenCtx.font = (rectSize) + 'px monospace';
+
+                const startRow = Math.max(0, history.length - historyLength);
+                const displayedHistory = history.slice(startRow, history.length);
+
+                offScreenCtx.save();
+                offScreenCtx.translate(0, Math.floor(scrollOffset));
+
+                displayedHistory.forEach((data, row) => {
+                    let coreIndex = 0;
+                    const yOffset = Math.floor(row * rectSize);
+
+                    if (yOffset + rectSize <= 0 || yOffset >= canvas.height) {
+                        return;
+                    }
+
+                    data.forEach((value, col) => {
+                        if (col === 0) {
+                            const x = 2;
+                            const y = Math.floor(yOffset + rectSize - 2);
+                            if (value) {
+                                offScreenCtx.fillStyle = '#FFFFFF';
+                                try {
+                                    offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
+                                } catch (e) {
+                                    console.error('Error drawing text:', e);
+                                }
+                            }
+                        } else if (col === 1) {
+                            return;
+                        } else {
+                            if (value === "" || value === "|") {
+                                coreIndex++;
+                                return;
+                            }
+                            const x = Math.floor(coreIndex * rectSize + timeWidth);
+                            const y = Math.floor(yOffset);
+                            let color = getFlameColor(parseFloat(value));
+                            offScreenCtx.fillStyle = color;
+                            offScreenCtx.fillRect(x, y, rectSize, rectSize);
+                            coreIndex++;
+                        }
+                    });
+                });
+
+                offScreenCtx.restore();
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(offScreenCanvas, 0, 0);
+
+                if (!isPaused) {
+                    animationFrameId = requestAnimationFrame(draw);
+                }
+            }
+
+            function handleVisibilityChange() {
+                if (document.visibilityState === 'visible') {
+                    fetchHistory().then(() => {
+                        lastUpdateTime = performance.now();
+                        scrollOffset = 0;
+                        if (!isPaused) {
+                            animationFrameId = requestAnimationFrame(draw);
+                        }
+                    });
+                } else {
+                    cancelAnimationFrame(animationFrameId);
+                }
+            }
+
+            function togglePause() {
+                isPaused = !isPaused;
+                console.log("Paused:", isPaused);
+                if (!isPaused) {
+                    fetchHistory().then(() => {
+                        lastUpdateTime = performance.now();
+                        scrollOffset = 0;
+                        animationFrameId = requestAnimationFrame(draw);
+                    });
+                } else {
+                    cancelAnimationFrame(animationFrameId);
+                }
+            }
+
+            function refreshHistoryPeriodically() {
+                setInterval(fetchHistory, 60000);
+            }
+
+            function clearDataQueuePeriodically() {
+                setInterval(() => {
+                    if (dataQueue.length > maxHistoryLength) {
+                        dataQueue = dataQueue.slice(-maxHistoryLength);
+                    }
+                }, 60000); // Clear the data queue every 60 seconds
+            }
+
+            document.addEventListener("keydown", togglePause);
+            canvas.addEventListener("click", togglePause);
+            document.addEventListener("visibilitychange", handleVisibilityChange);
+
+            updateCanvasDimensions();
+            fetchHistory().then(() => {
+                animationFrameId = requestAnimationFrame(draw);
+            });
+            refreshHistoryPeriodically();
+            clearDataQueuePeriodically();
+
+            socket.onopen = function() {
+                console.log('WebSocket connection opened.');
+            };
+
+            socket.onmessage = function(event) {
+                if (isPaused) return;
+
+                const data = event.data.split(",");
+                if (data.length > 0) {
+                    dataQueue.push(data);
+                }
+            };
+
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+
+            socket.onclose = function() {
+                console.log('WebSocket connection closed.');
+            };
+        });
+    </script>
+</body>
+</html>
