@@ -7,12 +7,12 @@
         body {
             background-color: #16273f;
             margin: 0;
-            overflow: hidden; /* Prevent scrolling */
+            overflow: hidden;
         }
         canvas {
             border: 1px solid #16273f;
             background-color: #16273f;
-            position: fixed; /* Fix the canvas position */
+            position: fixed;
             top: 0;
             left: 0;
         }
@@ -27,17 +27,17 @@
             const ctx = canvas.getContext('2d');
             const rectSize = %d;
             const historyLength = %d;
-            const timeWidth = rectSize * 9; // Width allocated for the time labels
+            const timeWidth = rectSize * 9;
             const dataInterval = %d;
             let history = [];
             let isPaused = false;
             let scrollOffset = 0;
             let animationFrameId;
             let lastUpdateTime = performance.now();
-            const scrollSpeed = rectSize / dataInterval; // Scroll speed calculation
-            let dataQueue = []; // Queue to buffer incoming data points
-            let lastDataTimestamp = performance.now(); // Timestamp of the last data row
-            let redrawStartTime;
+            const scrollSpeed = rectSize / dataInterval;
+            let dataQueue = [];
+            let lastDataTimestamp = performance.now();
+            let targetFPS = 60;
 
             const offScreenCanvas = document.createElement('canvas');
             const offScreenCtx = offScreenCanvas.getContext('2d');
@@ -93,7 +93,7 @@
             function draw() {
                 if (history.length === 0) return;
 
-                redrawStartTime = performance.now();
+                const redrawStartTime = performance.now();
                 const elapsed = redrawStartTime - lastUpdateTime;
                 lastUpdateTime = redrawStartTime;
 
@@ -116,7 +116,7 @@
                 }
 
                 offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
-                offScreenCtx.font = (rectSize) + 'px monospace';
+                offScreenCtx.font = `${rectSize}px monospace`;
 
                 const startRow = Math.max(0, history.length - historyLength);
                 const displayedHistory = history.slice(startRow, history.length);
@@ -138,11 +138,7 @@
                             const y = Math.floor(yOffset + rectSize - 2);
                             if (value) {
                                 offScreenCtx.fillStyle = '#FFFFFF';
-                                try {
-                                    offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
-                                } catch (e) {
-                                    console.error('Error drawing text:', e);
-                                }
+                                offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
                             }
                         } else if (col === 1) {
                             return;
@@ -167,7 +163,16 @@
                 ctx.drawImage(offScreenCanvas, 0, 0);
 
                 if (!isPaused) {
-                    animationFrameId = requestAnimationFrame(draw);
+                    const frameTime = 1000 / targetFPS;
+                    const actualFrameTime = performance.now() - redrawStartTime;
+                    if (actualFrameTime > frameTime) {
+                        targetFPS = Math.max(10, targetFPS - 5);
+                        console.log(`Slowing down FPS to: ${targetFPS}`);
+                    } else if (targetFPS < 60 && actualFrameTime < frameTime * 0.3) {
+                        targetFPS = Math.min(60, targetFPS + 5);
+                        console.log(`Speeding up FPS to: ${targetFPS}`);
+                    }
+                    animationFrameId = setTimeout(() => requestAnimationFrame(draw), 1000 / targetFPS);
                 }
             }
 
@@ -181,7 +186,7 @@
                         }
                     });
                 } else {
-                    cancelAnimationFrame(animationFrameId);
+                    clearTimeout(animationFrameId);
                 }
             }
 
@@ -195,7 +200,7 @@
                         animationFrameId = requestAnimationFrame(draw);
                     });
                 } else {
-                    cancelAnimationFrame(animationFrameId);
+                    clearTimeout(animationFrameId);
                 }
             }
 
@@ -208,7 +213,7 @@
                     if (dataQueue.length > historyLength) {
                         dataQueue = dataQueue.slice(-historyLength);
                     }
-                }, 60000); // Clear the data queue every 60 seconds
+                }, 60000);
             }
 
             document.addEventListener("keydown", togglePause);
