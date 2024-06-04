@@ -295,8 +295,6 @@ const htmlContent = `<!DOCTYPE html>
             const historyLength = %d;
             const timeWidth = rectSize * 9; // Width allocated for the time labels
             const dataInterval = %d;
-            const timerSlack = dataInterval * 0.2; // Slack interval in milliseconds
-            const slackInterval = dataInterval - timerSlack; // Interval considering slack
             const maxHistoryLength = historyLength; // Maximum length of the history array
             let history = [];
             let isPaused = false;
@@ -306,14 +304,13 @@ const htmlContent = `<!DOCTYPE html>
             const scrollSpeed = rectSize / dataInterval; // Scroll speed calculation
             let dataQueue = []; // Queue to buffer incoming data points
             let lastDataTimestamp = performance.now(); // Timestamp of the last data row
-            let targetRedrawInterval = dataInterval; // Start with the default interval
             let redrawStartTime;
 
             const offScreenCanvas = document.createElement('canvas');
             const offScreenCtx = offScreenCanvas.getContext('2d');
 
             function fetchHistory() {
-                fetch('/history')
+                return fetch('/history')
                     .then(response => response.text())
                     .then(data => {
                         history = [];
@@ -327,7 +324,6 @@ const htmlContent = `<!DOCTYPE html>
                             history = history.slice(0, maxHistoryLength);
                         }
                         updateCanvasDimensions();
-                        draw();
                     })
                     .catch(error => {
                         console.error('Fetching history failed:', error);
@@ -437,28 +433,20 @@ const htmlContent = `<!DOCTYPE html>
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(offScreenCanvas, 0, 0);
 
-                const redrawTime = performance.now() - redrawStartTime;
-                if (redrawTime > targetRedrawInterval) {
-                    targetRedrawInterval = redrawTime * 1.5; // Increase the interval more aggressively
-                } else {
-                    targetRedrawInterval = targetRedrawInterval * 0.8 + redrawTime * 0.2; // Adjust down more smoothly
-                }
-
                 if (!isPaused) {
-                    setTimeout(() => {
-                        animationFrameId = requestAnimationFrame(draw);
-                    }, targetRedrawInterval);
+                    animationFrameId = requestAnimationFrame(draw);
                 }
             }
 
             function handleVisibilityChange() {
                 if (document.visibilityState === 'visible') {
-                    fetchHistory();
-                    lastUpdateTime = performance.now();
-                    scrollOffset = 0;
-                    if (!isPaused) {
-                        animationFrameId = requestAnimationFrame(draw);
-                    }
+                    fetchHistory().then(() => {
+                        lastUpdateTime = performance.now();
+                        scrollOffset = 0;
+                        if (!isPaused) {
+                            animationFrameId = requestAnimationFrame(draw);
+                        }
+                    });
                 } else {
                     cancelAnimationFrame(animationFrameId);
                 }
@@ -468,9 +456,11 @@ const htmlContent = `<!DOCTYPE html>
                 isPaused = !isPaused;
                 console.log("Paused:", isPaused);
                 if (!isPaused) {
-                    fetchHistory();
-                    lastUpdateTime = performance.now();
-                    animationFrameId = requestAnimationFrame(draw);
+                    fetchHistory().then(() => {
+                        lastUpdateTime = performance.now();
+                        scrollOffset = 0;
+                        animationFrameId = requestAnimationFrame(draw);
+                    });
                 } else {
                     cancelAnimationFrame(animationFrameId);
                 }
@@ -493,7 +483,9 @@ const htmlContent = `<!DOCTYPE html>
             document.addEventListener("visibilitychange", handleVisibilityChange);
 
             updateCanvasDimensions();
-            fetchHistory();
+            fetchHistory().then(() => {
+                animationFrameId = requestAnimationFrame(draw);
+            });
             refreshHistoryPeriodically();
             clearDataQueuePeriodically();
 
@@ -517,8 +509,6 @@ const htmlContent = `<!DOCTYPE html>
             socket.onclose = function() {
                 console.log('WebSocket connection closed.');
             };
-
-            animationFrameId = requestAnimationFrame(draw);
         });
     </script>
 </body>
