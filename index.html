@@ -26,7 +26,8 @@
             const canvas = document.getElementById('cpuCanvas');
             const ctx = canvas.getContext('2d');
             const rectSize = %d;
-            const historyLength = %d;
+            const origHistoryLength = %d;
+            historyLength = origHistoryLength;
             const timeWidth = rectSize * 9;
             const dataInterval = %d;
             let history = [];
@@ -37,7 +38,7 @@
             const scrollSpeed = rectSize / dataInterval;
             let dataQueue = [];
             let lastDataTimestamp = performance.now();
-            let targetFPS = 60;
+            let targetFPS = 50;
 
             const offScreenCanvas = document.createElement('canvas');
             const offScreenCtx = offScreenCanvas.getContext('2d');
@@ -66,9 +67,9 @@
             function updateCanvasDimensions() {
                 if (history.length > 0) {
                     canvas.width = (history[0].length - 2) * rectSize + timeWidth;
-                    canvas.height = historyLength * rectSize;
+                    canvas.height = historyLength * rectSize - rectSize;
                     offScreenCanvas.width = canvas.width;
-                    offScreenCanvas.height = canvas.height;
+                    offScreenCanvas.height = canvas.height + rectSize;
                 }
             }
 
@@ -100,7 +101,7 @@
                 scrollOffset += (scrollSpeed * elapsed);
 
                 if (scrollOffset >= rectSize) {
-                    scrollOffset -= rectSize;
+                    scrollOffset = 0;
 
                     if (dataQueue.length > 0) {
                         const newData = dataQueue.shift();
@@ -165,12 +166,28 @@
                 if (!isPaused) {
                     const frameTime = 1000 / targetFPS;
                     const actualFrameTime = performance.now() - redrawStartTime;
-                    if (actualFrameTime > frameTime) {
-                        targetFPS = Math.max(10, targetFPS - 5);
-                        console.log(`Slowing down FPS to: ${targetFPS}`);
-                    } else if (targetFPS < 60 && actualFrameTime < frameTime * 0.3) {
-                        targetFPS = Math.min(60, targetFPS + 5);
-                        console.log(`Speeding up FPS to: ${targetFPS}`);
+                    if (actualFrameTime > frameTime * 1.8) {
+                        targetFPS = Math.max(24, targetFPS - 1);
+                        if (targetFPS <= 36) {
+                            if (history != null && history.length < historyLength) {
+                                historyLength = history.length;
+                            }
+                            if (targetFPS <= 24)
+                                max = 20;
+                            else
+                                max = 100;
+                            historyLength = Math.max(Math.min(origHistoryLength, max), historyLength - 10);
+                            updateCanvasDimensions();
+                        }
+                        console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
+                    } else if (targetFPS < 50 && actualFrameTime < frameTime * 0.3) {
+                        if (historyLength < origHistoryLength) {
+                            historyLength = Math.min(origHistoryLength, historyLength + 5);
+                        } else {
+                            targetFPS = Math.min(60, targetFPS + 2);
+                        }
+                        updateCanvasDimensions();
+                        console.log(`Increasing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
                     }
                     animationFrameId = setTimeout(() => requestAnimationFrame(draw), 1000 / targetFPS);
                 }
