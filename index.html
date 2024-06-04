@@ -29,7 +29,6 @@
             const historyLength = %d;
             const timeWidth = rectSize * 9; // Width allocated for the time labels
             const dataInterval = %d;
-            const maxHistoryLength = historyLength; // Maximum length of the history array
             let history = [];
             let isPaused = false;
             let scrollOffset = 0;
@@ -54,8 +53,8 @@
                                 history.push(row.split(','));
                             }
                         });
-                        if (history.length > maxHistoryLength) {
-                            history = history.slice(0, maxHistoryLength);
+                        if (history.length > historyLength) {
+                            history = history.slice(0, historyLength);
                         }
                         updateCanvasDimensions();
                     })
@@ -206,8 +205,8 @@
 
             function clearDataQueuePeriodically() {
                 setInterval(() => {
-                    if (dataQueue.length > maxHistoryLength) {
-                        dataQueue = dataQueue.slice(-maxHistoryLength);
+                    if (dataQueue.length > historyLength) {
+                        dataQueue = dataQueue.slice(-historyLength);
                     }
                 }, 60000); // Clear the data queue every 60 seconds
             }
