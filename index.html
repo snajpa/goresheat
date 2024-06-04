@@ -27,7 +27,7 @@
             const ctx = canvas.getContext('2d');
             const rectSize = %d;
             const origHistoryLength = %d;
-            historyLength = origHistoryLength;
+            let historyLength = origHistoryLength;
             const timeWidth = rectSize * 9;
             const dataInterval = %d;
             let history = [];
@@ -48,10 +48,11 @@
                     .then(response => response.text())
                     .then(data => {
                         history = [];
-                        data.split('\n').forEach(row => {
+                        const rows = data.split('\n').reverse(); // Reverse the order
+                        rows.forEach(row => {
                             row = row.trim();
                             if (row) {
-                                history.push(row.split(','));
+                                history.unshift(row.split(',')); // Insert at the start
                             }
                         });
                         if (history.length > historyLength) {
@@ -105,22 +106,19 @@
 
                     if (dataQueue.length > 0) {
                         const newData = dataQueue.shift();
-                        history.unshift(newData);
-                    } else {
-                        const lastRow = history.length > 0 ? history[0].slice() : [];
-                        history.unshift(lastRow);
+                        history.unshift(newData); // Insert new data at the start
                     }
 
                     if (history.length > historyLength) {
-                        history.pop();
+                        history.pop(); // Remove the oldest data (last element)
                     }
                 }
 
                 offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
                 offScreenCtx.font = `${rectSize}px monospace`;
 
-                const startRow = Math.max(0, history.length - historyLength);
-                const displayedHistory = history.slice(startRow, history.length);
+                const startRow = 0; // Start from the first row
+                const displayedHistory = history.slice(startRow, historyLength);
 
                 offScreenCtx.save();
                 offScreenCtx.translate(0, Math.floor(scrollOffset));
@@ -166,7 +164,7 @@
                 if (!isPaused) {
                     const frameTime = 1000 / targetFPS;
                     const actualFrameTime = performance.now() - redrawStartTime;
-                    if (actualFrameTime > frameTime * 1.8) {
+                    if (actualFrameTime > frameTime) {
                         targetFPS = Math.max(24, targetFPS - 1);
                         if (targetFPS <= 36) {
                             if (history != null && history.length < historyLength) {
@@ -183,10 +181,10 @@
                     } else if (targetFPS < 50 && actualFrameTime < frameTime * 0.3) {
                         if (historyLength < origHistoryLength) {
                             historyLength = Math.min(origHistoryLength, historyLength + 5);
+                            updateCanvasDimensions();
                         } else {
                             targetFPS = Math.min(60, targetFPS + 2);
                         }
-                        updateCanvasDimensions();
                         console.log(`Increasing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
                     }
                     animationFrameId = setTimeout(() => requestAnimationFrame(draw), 1000 / targetFPS);
@@ -253,7 +251,7 @@
 
                 const data = event.data.split(",");
                 if (data.length > 0) {
-                    dataQueue.push(data);
+                    dataQueue.unshift(data); // Add new data at the start of the queue
                 }
             };
 
