@@ -27,7 +27,7 @@
             const ctx = canvas.getContext('2d');
             const rectSize = %d;
             const origHistoryLength = %d;
-            let historyLength = origHistoryLength;
+            let historyLength = Math.min(80, origHistoryLength);
             const timeWidth = rectSize * 9;
             const dataInterval = %d;
             let history = [];
@@ -38,26 +38,32 @@
             const scrollSpeed = rectSize / dataInterval;
             let dataQueue = [];
             let lastDataTimestamp = performance.now();
-            let targetFPS = 50;
+            let maxFPS = 48;
+            let targetFPS = 30;
+            let neverUpdatedFromFetchHistory = true;
+            let dataLate = false;
 
             const offScreenCanvas = document.createElement('canvas');
             const offScreenCtx = offScreenCanvas.getContext('2d');
+
+            canvas.height = origHistoryLength * rectSize - rectSize;
 
             function fetchHistory() {
                 return fetch('/history')
                     .then(response => response.text())
                     .then(data => {
                         history = [];
-                        const rows = data.split('\n').reverse(); // Reverse the order
+                        const rows = data.split('\n').reverse();
                         rows.forEach(row => {
                             row = row.trim();
                             if (row) {
-                                history.unshift(row.split(',')); // Insert at the start
+                                history.unshift(row.split(','));
                             }
                         });
                         if (history.length > historyLength) {
                             history = history.slice(0, historyLength);
                         }
+                        canvas.width = (history[0].length - 2) * rectSize + timeWidth;
                         updateCanvasDimensions();
                     })
                     .catch(error => {
@@ -66,12 +72,8 @@
             }
 
             function updateCanvasDimensions() {
-                if (history.length > 0) {
-                    canvas.width = (history[0].length - 2) * rectSize + timeWidth;
-                    canvas.height = historyLength * rectSize - rectSize;
-                    offScreenCanvas.width = canvas.width;
-                    offScreenCanvas.height = canvas.height + rectSize;
-                }
+                offScreenCanvas.width = canvas.width;
+                offScreenCanvas.height = historyLength * rectSize + rectSize;
             }
 
             function getFlameColor(percentage) {
@@ -101,23 +103,20 @@
 
                 scrollOffset += (scrollSpeed * elapsed);
 
-                if (scrollOffset >= rectSize) {
-                    scrollOffset = 0;
-
-                    if (dataQueue.length > 0) {
+                while (scrollOffset >= rectSize) {
+                    scrollOffset -= rectSize;
+                    if (dataQueue.length === 0) {
+                        history.unshift(history[0]);
+                    } else {
                         const newData = dataQueue.shift();
-                        history.unshift(newData); // Insert new data at the start
+                        history.unshift(newData);
                     }
-
-                    if (history.length > historyLength) {
-                        history.pop(); // Remove the oldest data (last element)
-                    }
-                }
+                }               
 
                 offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
                 offScreenCtx.font = `${rectSize}px monospace`;
 
-                const startRow = 0; // Start from the first row
+                const startRow = 0;
                 const displayedHistory = history.slice(startRow, historyLength);
 
                 offScreenCtx.save();
@@ -165,20 +164,17 @@
                     const frameTime = 1000 / targetFPS;
                     const actualFrameTime = performance.now() - redrawStartTime;
                     if (actualFrameTime > frameTime) {
-                        targetFPS = Math.max(24, targetFPS - 1);
-                        if (targetFPS <= 36) {
+                        targetFPS = Math.max(30, targetFPS - 1);
+                        if (targetFPS <= 30) {
                             if (history != null && history.length < historyLength) {
                                 historyLength = history.length;
                             }
-                            if (targetFPS <= 24)
-                                max = 20;
-                            else
-                                max = 100;
-                            historyLength = Math.max(Math.min(origHistoryLength, max), historyLength - 10);
-                            updateCanvasDimensions();
+                            historyLength = Math.max(Math.min(origHistoryLength, 15), historyLength - 5);
+                            if (historyLength < origHistoryLength)
+                                updateCanvasDimensions();
                         }
                         console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
-                    } else if (targetFPS < 50 && actualFrameTime < frameTime * 0.3) {
+                    } else if (targetFPS < maxFPS && actualFrameTime < frameTime * 0.3) {
                         if (historyLength < origHistoryLength) {
                             historyLength = Math.min(origHistoryLength, historyLength + 5);
                             updateCanvasDimensions();
@@ -219,10 +215,6 @@
                 }
             }
 
-            function refreshHistoryPeriodically() {
-                setInterval(fetchHistory, 60000);
-            }
-
             function clearDataQueuePeriodically() {
                 setInterval(() => {
                     if (dataQueue.length > historyLength) {
@@ -239,7 +231,6 @@
             fetchHistory().then(() => {
                 animationFrameId = requestAnimationFrame(draw);
             });
-            refreshHistoryPeriodically();
             clearDataQueuePeriodically();
 
             socket.onopen = function() {
@@ -252,6 +243,7 @@
                 const data = event.data.split(",");
                 if (data.length > 0) {
                     dataQueue.unshift(data); // Add new data at the start of the queue
+                    lastDataTimestamp = performance.now();
                 }
             };
 
