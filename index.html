@@ -22,7 +22,6 @@
     <canvas id="cpuCanvas"></canvas>
     <script>
         document.addEventListener("DOMContentLoaded", function () {
-            const socket = new WebSocket('ws://' + window.location.host + '/ws');
             const canvas = document.getElementById('cpuCanvas');
             const ctx = canvas.getContext('2d');
             let rectSize = %d;
@@ -43,6 +42,32 @@
             let scrollSpeed = 1;
             const offScreenCanvas = document.createElement('canvas');
             const offScreenCtx = offScreenCanvas.getContext('2d');
+            var socket;
+            function connect() {
+                socket = new WebSocket('ws://' + window.location.host + '/ws');
+                socket.onopen = function() {
+                    console.log('WebSocket connection opened.');
+                };
+                socket.onerror = function(error) {
+                    console.error('WebSocket error:', error);
+                };
+                socket.onclose = function() {
+                    console.log('WebSocket connection closed.');
+                    setTimeout(connect, 1000);
+                };
+                socket.onmessage = function(event) {
+                    if (isPaused) return;
+
+                    const data = event.data.split(",");
+                    if (data.length > 0) {
+                        if (dataQueue.length >= historyLength) {
+                            dataQueue.shift();  // Remove the oldest data if the queue exceeds history length
+                        }
+                        dataQueue.push(data);
+                    }
+                };
+            }
+            connect();
 
             canvas.height = origHistoryLength * rectSize - rectSize;
 
@@ -86,6 +111,27 @@
                     canvas.width = newWidth;
                     offScreenCanvas.width = canvas.width;
                 }
+            }
+
+            function adjustRectSize() {
+                if (isPaused) {
+                    return;
+                }
+                let maxRectSize = Math.floor((window.innerWidth - timeWidth) / numDataRows);
+                if (rectSize < 1) {
+                    rectSize = 1;
+                }
+                if (rectSize > maxRectSize) {
+                    rectSize = maxRectSize;
+                }
+                console.log('new rectSize:', rectSize);
+                timeWidth = rectSize * 9;
+                if (rectSize <= 5) {
+                    timeWidth = 0;
+                }
+                scrollSpeed = rectSize / dataInterval;
+                historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
+                updateCanvasDimensions();
             }
 
             function getFlameColor(percentage) {
@@ -150,6 +196,7 @@
                             const x = 2;
                             const y = Math.floor(yOffset + rectSize - 2);
                             if (value) {
+                                offScreenCtx.fillStyle = 'white';
                                 offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
                             }
                         } else if (col === 1) {
@@ -184,21 +231,21 @@
             function adjustFrameRate() {
                 const frameTime = 1000 / targetFPS;
                 const actualFrameTime = performance.now() - lastUpdateTime;
-                if (!isPaused && actualFrameTime > frameTime) {
+                if (!isPaused && actualFrameTime > frameTime * 2.5) {
                     targetFPS = Math.max(minFPS, targetFPS - 1);
                     if (targetFPS <= minFPS) {
                         if (history.length < historyLength) {
                             historyLength = history.length;
                         }
-                        historyLength = Math.max(Math.min(origHistoryLength, 15), historyLength - 5);
+                        historyLength = Math.max(Math.min(origHistoryLength, 30), historyLength - 1);
                         historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
                         if (historyLength < origHistoryLength)
                             updateCanvasDimensions();
                     }
                     console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
-                } else if (!isPaused && targetFPS < maxFPS && actualFrameTime < frameTime * 0.2) {
+                } else if (!isPaused && targetFPS < maxFPS && actualFrameTime < frameTime * 0.3) {
                     if (historyLength < Math.round(window.innerHeight / rectSize)) {
-                        historyLength = Math.min(origHistoryLength, historyLength + 1);
+                        historyLength = Math.min(origHistoryLength, historyLength + 50);
                         historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
                         updateCanvasDimensions();
                     } else {
@@ -206,7 +253,7 @@
                     }
                     console.log(`Increasing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
                 }
-                setTimeout(adjustFrameRate, frameTime);
+                setTimeout(adjustFrameRate, dataInterval);
             }
 
             function handleVisibilityChange() {
@@ -224,9 +271,8 @@
             }
 
             function togglePause() {
-                isPaused = !isPaused;
                 console.log("Paused:", isPaused);
-                if (!isPaused) {
+                if (isPaused) {
                     fetchHistory().then(() => {
                         lastUpdateTime = performance.now();
                         scrollOffset = 0;
@@ -235,6 +281,7 @@
                 } else {
                     cancelAnimationFrame(animationFrameId);
                 }
+                isPaused = !isPaused;
             }
 
             function clearDataQueuePeriodically() {
@@ -245,26 +292,9 @@
                 }, 5000);
             }
 
-            function adjustRectSize() {
-                if (rectSize < 1) {
-                    rectSize = 1;
-                }
-                if (rectSize > 25) {
-                    rectSize = 25;
-                }
-                console.log('new rectSize:', rectSize);
-                timeWidth = rectSize * 9;
-                if (rectSize <= 5) {
-                    timeWidth = 0;
-                }
-                scrollSpeed = rectSize / dataInterval;
-                updateCanvasDimensions();
-            }
-
             function adjustRectSizeEvent(event) {
                 if (event.deltaY < 0) {
-                    if (rectSize <= 25)
-                        rectSize += 1;
+                    rectSize += 1;
                 } else {
                     if (rectSize >= 1)
                         rectSize -= 1;
@@ -284,30 +314,6 @@
             adjustRectSize();
             updateCanvasDimensions();
             adjustFrameRate();
-
-            socket.onopen = function() {
-                console.log('WebSocket connection opened.');
-            };
-
-            socket.onmessage = function(event) {
-                if (isPaused) return;
-
-                const data = event.data.split(",");
-                if (data.length > 0) {
-                    if (dataQueue.length >= historyLength) {
-                        dataQueue.shift();  // Remove the oldest data if the queue exceeds history length
-                    }
-                    dataQueue.push(data);
-                }
-            };
-
-            socket.onerror = function(error) {
-                console.error('WebSocket error:', error);
-            };
-
-            socket.onclose = function() {
-                console.log('WebSocket connection closed.');
-            };
         });
     </script>
 </body>
