@@ -9,25 +9,51 @@
             margin: 0;
             overflow: hidden;
         }
-        canvas {
+        #resCanvas {
             border: 1px solid #16273f;
             background-color: #16273f;
-            position: fixed;
+            position: absolute;
             top: 0;
             left: 0;
+        }
+        #canvas-container {
+            top: 0;
+            left: 0;
+            position: absolute;
+            width: 100%%;
+            height: 100%%;
+        }
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%%;
+            height: 100%%;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            font-size: 3em;
+            text-align: center;
+            font-family: monospace;
         }
     </style>
 </head>
 <body>
-    <canvas id="cpuCanvas"></canvas>
+    <div id="canvas-container">
+        <canvas id="resCanvas"></canvas>
+        <div id="overlay">Paused</div>
+    </div>
     <script>
         document.addEventListener("DOMContentLoaded", function () {
-            const canvas = document.getElementById('cpuCanvas');
+            const canvas = document.getElementById('resCanvas');
+            const overlay = document.getElementById('overlay');
             const ctx = canvas.getContext('2d');
             let rectSize = %d;
             const origHistoryLength = %d;
             let numDataRows = %d;
-            let historyLength = Math.min(Math.round(window.innerHeight / rectSize), origHistoryLength);
+            let historyLength = origHistoryLength;
             let timeWidth = rectSize * 9;
             let dataInterval = %d;
             let history = [];
@@ -68,6 +94,8 @@
                 };
             }
             connect();
+
+            document.title = window.location.host;
 
             canvas.height = origHistoryLength * rectSize - rectSize;
 
@@ -273,12 +301,14 @@
             function togglePause() {
                 console.log("Paused:", isPaused);
                 if (isPaused) {
+                    overlay.style.display = 'none';
                     fetchHistory().then(() => {
                         lastUpdateTime = performance.now();
                         scrollOffset = 0;
                         animationFrameId = requestAnimationFrame(draw);
                     });
                 } else {
+                    overlay.style.display = 'flex';
                     cancelAnimationFrame(animationFrameId);
                 }
                 isPaused = !isPaused;
