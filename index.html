@@ -37,15 +37,10 @@
             let animationFrameId;
             let lastUpdateTime = performance.now();
             let dataQueue = [];
-            let lastDataTimestamp = performance.now();
             let maxFPS = 60;
             let targetFPS = 50;
             let minFPS = 30;
-            let neverUpdatedFromFetchHistory = true;
-            let dataLate = false;
             let scrollSpeed = 1;
-            console.log('window.innerHeight:', window.innerHeight);
-            console.log('historyLength:', historyLength);
             const offScreenCanvas = document.createElement('canvas');
             const offScreenCtx = offScreenCanvas.getContext('2d');
 
@@ -54,7 +49,6 @@
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('rectSize')) {
                 rectSize = parseInt(urlParams.get('rectSize'));
-                console.log('rectSize:', rectSize);
             }
             if (urlParams.has('historyLength')) {
                 historyLength = parseInt(urlParams.get('historyLength'));
@@ -67,14 +61,7 @@
                 return fetch('/history')
                     .then(response => response.text())
                     .then(data => {
-                        history = [];
-                        const rows = data.split('\n').reverse();
-                        rows.forEach(row => {
-                            row = row.trim();
-                            if (row) {
-                                history.unshift(row.split(','));
-                            }
-                        });
+                        history = data.split('\n').map(row => row.trim().split(','));
                         if (history.length > historyLength) {
                             history = history.slice(0, historyLength);
                         }
@@ -131,10 +118,13 @@
                 while (scrollOffset >= rectSize) {
                     scrollOffset -= rectSize;
                     if (dataQueue.length === 0) {
-                        history.unshift(history[0]);
+                        history.unshift([...history[0]]);
                     } else {
                         const newData = dataQueue.shift();
                         history.unshift(newData);
+                    }
+                    while (history.length > historyLength) {
+                        history.pop();
                     }
                 }
 
@@ -155,7 +145,6 @@
                     }
 
                     data.forEach((value, col) => {
-                        offScreenCtx.fillStyle = '#FFFFFF';
                         if (col === 0) {
                             if (timeWidth == 0) return;
                             const x = 2;
@@ -195,10 +184,10 @@
             function adjustFrameRate() {
                 const frameTime = 1000 / targetFPS;
                 const actualFrameTime = performance.now() - lastUpdateTime;
-                if (actualFrameTime > frameTime) {
+                if (!isPaused && actualFrameTime > frameTime) {
                     targetFPS = Math.max(minFPS, targetFPS - 1);
                     if (targetFPS <= minFPS) {
-                        if (history != null && history.length < historyLength) {
+                        if (history.length < historyLength) {
                             historyLength = history.length;
                         }
                         historyLength = Math.max(Math.min(origHistoryLength, 15), historyLength - 5);
@@ -207,9 +196,9 @@
                             updateCanvasDimensions();
                     }
                     console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
-                } else if (targetFPS < maxFPS && actualFrameTime < frameTime * 0.2) {
+                } else if (!isPaused && targetFPS < maxFPS && actualFrameTime < frameTime * 0.2) {
                     if (historyLength < Math.round(window.innerHeight / rectSize)) {
-                        historyLength = Math.min(origHistoryLength, historyLength + 5);
+                        historyLength = Math.min(origHistoryLength, historyLength + 1);
                         historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
                         updateCanvasDimensions();
                     } else {
@@ -285,7 +274,7 @@
 
             document.onwheel = adjustRectSizeEvent;
 
-            canvas.addEventListener("click", togglePause);
+            document.addEventListener("click", togglePause);
             document.addEventListener("visibilitychange", handleVisibilityChange);
 
             fetchHistory().then(() => {
@@ -305,8 +294,10 @@
 
                 const data = event.data.split(",");
                 if (data.length > 0) {
-                    dataQueue.push(data); // Add new data at the end of the queue
-                    lastDataTimestamp = performance.now();
+                    if (dataQueue.length >= historyLength) {
+                        dataQueue.shift();  // Remove the oldest data if the queue exceeds history length
+                    }
+                    dataQueue.push(data);
                 }
             };
 
