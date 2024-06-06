@@ -25,28 +25,43 @@
             const socket = new WebSocket('ws://' + window.location.host + '/ws');
             const canvas = document.getElementById('cpuCanvas');
             const ctx = canvas.getContext('2d');
-            const rectSize = %d;
+            let rectSize = %d;
             const origHistoryLength = %d;
-            let historyLength = Math.min(80, origHistoryLength);
-            const timeWidth = rectSize * 9;
-            const dataInterval = %d;
+            let numDataRows = %d;
+            let historyLength = Math.min(Math.round(window.innerHeight / rectSize), origHistoryLength);
+            let timeWidth = rectSize * 9;
+            let dataInterval = %d;
             let history = [];
             let isPaused = false;
             let scrollOffset = 0;
             let animationFrameId;
             let lastUpdateTime = performance.now();
-            const scrollSpeed = rectSize / dataInterval;
             let dataQueue = [];
             let lastDataTimestamp = performance.now();
-            let maxFPS = 48;
-            let targetFPS = 30;
+            let maxFPS = 60;
+            let targetFPS = 50;
+            let minFPS = 30;
             let neverUpdatedFromFetchHistory = true;
             let dataLate = false;
-
+            let scrollSpeed = 1;
+            console.log('window.innerHeight:', window.innerHeight);
+            console.log('historyLength:', historyLength);
             const offScreenCanvas = document.createElement('canvas');
             const offScreenCtx = offScreenCanvas.getContext('2d');
 
             canvas.height = origHistoryLength * rectSize - rectSize;
+
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('rectSize')) {
+                rectSize = parseInt(urlParams.get('rectSize'));
+                console.log('rectSize:', rectSize);
+            }
+            if (urlParams.has('historyLength')) {
+                historyLength = parseInt(urlParams.get('historyLength'));
+            }
+            if (urlParams.has('dataInterval')) {
+                dataInterval = parseInt(urlParams.get('dataInterval'));
+            }
 
             function fetchHistory() {
                 return fetch('/history')
@@ -63,7 +78,6 @@
                         if (history.length > historyLength) {
                             history = history.slice(0, historyLength);
                         }
-                        canvas.width = (history[0].length - 2) * rectSize + timeWidth;
                         updateCanvasDimensions();
                     })
                     .catch(error => {
@@ -72,8 +86,19 @@
             }
 
             function updateCanvasDimensions() {
-                offScreenCanvas.width = canvas.width;
-                offScreenCanvas.height = historyLength * rectSize + rectSize;
+                let newHeight = origHistoryLength * rectSize - rectSize;
+                if (canvas.height !== newHeight) {
+                    canvas.height = newHeight;
+                }
+                let newOffScreenHeight = historyLength * rectSize - rectSize;
+                if (offScreenCanvas.height !== newOffScreenHeight) {
+                    offScreenCanvas.height = newOffScreenHeight;
+                }
+                let newWidth = numDataRows * rectSize + timeWidth;
+                if (canvas.width !== newWidth) {
+                    canvas.width = newWidth;
+                    offScreenCanvas.width = canvas.width;
+                }
             }
 
             function getFlameColor(percentage) {
@@ -116,8 +141,7 @@
                 offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
                 offScreenCtx.font = `${rectSize}px monospace`;
 
-                const startRow = 0;
-                const displayedHistory = history.slice(startRow, historyLength);
+                const displayedHistory = history.slice(0, historyLength);
 
                 offScreenCtx.save();
                 offScreenCtx.translate(0, Math.floor(scrollOffset));
@@ -131,11 +155,12 @@
                     }
 
                     data.forEach((value, col) => {
+                        offScreenCtx.fillStyle = '#FFFFFF';
                         if (col === 0) {
+                            if (timeWidth == 0) return;
                             const x = 2;
                             const y = Math.floor(yOffset + rectSize - 2);
                             if (value) {
-                                offScreenCtx.fillStyle = '#FFFFFF';
                                 offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
                             }
                         } else if (col === 1) {
@@ -156,6 +181,8 @@
                 });
 
                 offScreenCtx.restore();
+                offScreenCtx.clearRect(0, 0, offScreenCanvas.width, rectSize);
+                offScreenCtx.clearRect(0, offScreenCanvas.height - rectSize, offScreenCanvas.width, offScreenCanvas.height);
 
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(offScreenCanvas, 0, 0);
@@ -164,22 +191,24 @@
                     const frameTime = 1000 / targetFPS;
                     const actualFrameTime = performance.now() - redrawStartTime;
                     if (actualFrameTime > frameTime) {
-                        targetFPS = Math.max(30, targetFPS - 1);
-                        if (targetFPS <= 30) {
+                        targetFPS = Math.max(minFPS, targetFPS - 1);
+                        if (targetFPS <= minFPS) {
                             if (history != null && history.length < historyLength) {
                                 historyLength = history.length;
                             }
                             historyLength = Math.max(Math.min(origHistoryLength, 15), historyLength - 5);
+                            historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
                             if (historyLength < origHistoryLength)
                                 updateCanvasDimensions();
                         }
                         console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
-                    } else if (targetFPS < maxFPS && actualFrameTime < frameTime * 0.3) {
-                        if (historyLength < origHistoryLength) {
+                    } else if (targetFPS < maxFPS && actualFrameTime < frameTime * 0.2) {
+                        if (historyLength < Math.round(window.innerHeight / rectSize)) {
                             historyLength = Math.min(origHistoryLength, historyLength + 5);
+                            historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
                             updateCanvasDimensions();
                         } else {
-                            targetFPS = Math.min(60, targetFPS + 2);
+                            targetFPS = Math.min(maxFPS, targetFPS + 2);
                         }
                         console.log(`Increasing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
                     }
@@ -220,18 +249,49 @@
                     if (dataQueue.length > historyLength) {
                         dataQueue = dataQueue.slice(-historyLength);
                     }
-                }, 60000);
+                }, 5000);
             }
 
-            document.addEventListener("keydown", togglePause);
+            function adjustRectSize() {
+                if (rectSize < 1) {
+                    rectSize = 1;
+                }
+                if (rectSize > 25) {
+                    rectSize = 25;
+                }
+                console.log('new rectSize:', rectSize);
+                timeWidth = rectSize * 9;
+                if (rectSize <= 5) {
+                    timeWidth = 0;
+                }
+                scrollSpeed = rectSize / dataInterval;
+                updateCanvasDimensions();
+            }
+            function adjustRectSizeEvent(event) {
+                if (event.deltaY < 0) {
+                    if (rectSize <= 25)
+                        rectSize += 1;
+                } else {
+                    if (rectSize >= 1)
+                        rectSize -= 1;
+                }
+                adjustRectSize();
+            }
+
+            // Implement in a simpler way
+            //window.onwheel = adjustRectSizeEvent;
+            //canvas.onwheel = adjustRectSizeEvent;
+            document.onwheel = adjustRectSizeEvent;
+
             canvas.addEventListener("click", togglePause);
             document.addEventListener("visibilitychange", handleVisibilityChange);
 
-            updateCanvasDimensions();
             fetchHistory().then(() => {
                 animationFrameId = requestAnimationFrame(draw);
             });
             clearDataQueuePeriodically();
+            adjustRectSize();
+            updateCanvasDimensions();
 
             socket.onopen = function() {
                 console.log('WebSocket connection opened.');

@@ -260,7 +260,8 @@ func main() {
 	htmlContent := string(htmlFileContent)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		intervalMsec := interval.Milliseconds()
-		fmt.Fprintf(w, htmlContent, rectSize, historyLength, intervalMsec)
+		numDataRows := 3*numCPUs + 3*2
+		fmt.Fprintf(w, htmlContent, rectSize, historyLength, numDataRows, intervalMsec)
 	})
 	http.HandleFunc("/ws", handleConnections)
 	http.HandleFunc("/history", handleHistory)
