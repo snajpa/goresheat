@@ -136,7 +136,7 @@
                         const newData = dataQueue.shift();
                         history.unshift(newData);
                     }
-                }               
+                }
 
                 offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
                 offScreenCtx.font = `${rectSize}px monospace`;
@@ -188,32 +188,36 @@
                 ctx.drawImage(offScreenCanvas, 0, 0);
 
                 if (!isPaused) {
-                    const frameTime = 1000 / targetFPS;
-                    const actualFrameTime = performance.now() - redrawStartTime;
-                    if (actualFrameTime > frameTime) {
-                        targetFPS = Math.max(minFPS, targetFPS - 1);
-                        if (targetFPS <= minFPS) {
-                            if (history != null && history.length < historyLength) {
-                                historyLength = history.length;
-                            }
-                            historyLength = Math.max(Math.min(origHistoryLength, 15), historyLength - 5);
-                            historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
-                            if (historyLength < origHistoryLength)
-                                updateCanvasDimensions();
-                        }
-                        console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
-                    } else if (targetFPS < maxFPS && actualFrameTime < frameTime * 0.2) {
-                        if (historyLength < Math.round(window.innerHeight / rectSize)) {
-                            historyLength = Math.min(origHistoryLength, historyLength + 5);
-                            historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
-                            updateCanvasDimensions();
-                        } else {
-                            targetFPS = Math.min(maxFPS, targetFPS + 2);
-                        }
-                        console.log(`Increasing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
-                    }
-                    animationFrameId = setTimeout(() => requestAnimationFrame(draw), 1000 / targetFPS);
+                    animationFrameId = requestAnimationFrame(draw);
                 }
+            }
+
+            function adjustFrameRate() {
+                const frameTime = 1000 / targetFPS;
+                const actualFrameTime = performance.now() - lastUpdateTime;
+                if (actualFrameTime > frameTime) {
+                    targetFPS = Math.max(minFPS, targetFPS - 1);
+                    if (targetFPS <= minFPS) {
+                        if (history != null && history.length < historyLength) {
+                            historyLength = history.length;
+                        }
+                        historyLength = Math.max(Math.min(origHistoryLength, 15), historyLength - 5);
+                        historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
+                        if (historyLength < origHistoryLength)
+                            updateCanvasDimensions();
+                    }
+                    console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
+                } else if (targetFPS < maxFPS && actualFrameTime < frameTime * 0.2) {
+                    if (historyLength < Math.round(window.innerHeight / rectSize)) {
+                        historyLength = Math.min(origHistoryLength, historyLength + 5);
+                        historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
+                        updateCanvasDimensions();
+                    } else {
+                        targetFPS = Math.min(maxFPS, targetFPS + 2);
+                    }
+                    console.log(`Increasing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
+                }
+                setTimeout(adjustFrameRate, frameTime);
             }
 
             function handleVisibilityChange() {
@@ -226,7 +230,7 @@
                         }
                     });
                 } else {
-                    clearTimeout(animationFrameId);
+                    cancelAnimationFrame(animationFrameId);
                 }
             }
 
@@ -240,7 +244,7 @@
                         animationFrameId = requestAnimationFrame(draw);
                     });
                 } else {
-                    clearTimeout(animationFrameId);
+                    cancelAnimationFrame(animationFrameId);
                 }
             }
 
@@ -267,6 +271,7 @@
                 scrollSpeed = rectSize / dataInterval;
                 updateCanvasDimensions();
             }
+
             function adjustRectSizeEvent(event) {
                 if (event.deltaY < 0) {
                     if (rectSize <= 25)
@@ -278,9 +283,6 @@
                 adjustRectSize();
             }
 
-            // Implement in a simpler way
-            //window.onwheel = adjustRectSizeEvent;
-            //canvas.onwheel = adjustRectSizeEvent;
             document.onwheel = adjustRectSizeEvent;
 
             canvas.addEventListener("click", togglePause);
@@ -292,6 +294,7 @@
             clearDataQueuePeriodically();
             adjustRectSize();
             updateCanvasDimensions();
+            adjustFrameRate();
 
             socket.onopen = function() {
                 console.log('WebSocket connection opened.');
@@ -302,7 +305,7 @@
 
                 const data = event.data.split(",");
                 if (data.length > 0) {
-                    dataQueue.unshift(data); // Add new data at the start of the queue
+                    dataQueue.push(data); // Add new data at the end of the queue
                     lastDataTimestamp = performance.now();
                 }
             };
