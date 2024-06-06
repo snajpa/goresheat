@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	_ "embed"
 	"encoding/csv"
 	"flag"
 	"fmt"
@@ -14,6 +15,9 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+//go:embed index.html
+var HtmlContent string
 
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
@@ -252,16 +256,10 @@ func main() {
 		return
 	}
 
-	htmlFileContent, err := os.ReadFile("index.html")
-	if err != nil {
-		fmt.Println("Error reading index.html:", err)
-		return
-	}
-	htmlContent := string(htmlFileContent)
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		intervalMsec := interval.Milliseconds()
 		numDataRows := 3*numCPUs + 3*2
-		fmt.Fprintf(w, htmlContent, rectSize, historyLength, numDataRows, intervalMsec)
+		fmt.Fprintf(w, HtmlContent, rectSize, historyLength, numDataRows, intervalMsec)
 	})
 	http.HandleFunc("/ws", handleConnections)
 	http.HandleFunc("/history", handleHistory)
