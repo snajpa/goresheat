@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CPU Load Monitor</title>
+    <title>CPU and Disk Load Monitor</title>
     <style>
         body {
             background-color: #16273f;
@@ -162,21 +162,39 @@
                 updateCanvasDimensions();
             }
 
-            function getFlameColor(percentage) {
-                if (percentage <= 5) {
-                    return 'rgb(0,0,0)';
-                } else if (percentage <= 20) {
-                    return 'rgb(50,20,0)';
-                } else if (percentage <= 40) {
-                    return 'rgb(139,0,0)';
-                } else if (percentage <= 60) {
-                    return 'rgb(255,69,0)';
-                } else if (percentage <= 80) {
-                    return 'rgb(255,140,0)';
-                } else if (percentage <= 95) {
-                    return 'rgb(255,255,0)';
+            function getFlameColor(percentage, isDisk) {
+                if (isDisk) {
+                    if (percentage <= 5) {
+                        return 'rgb(0,0,0)';
+                    } else if (percentage <= 20) {
+                        return 'rgb(0,50,0)';
+                    } else if (percentage <= 40) {
+                        return 'rgb(0,139,0)';
+                    } else if (percentage <= 60) {
+                        return 'rgb(0,255,0)';
+                    } else if (percentage <= 80) {
+                        return 'rgb(0,255,140)';
+                    } else if (percentage <= 95) {
+                        return 'rgb(0,255,255)';
+                    } else {
+                        return 'rgb(255,255,255)';
+                    }
                 } else {
-                    return 'rgb(255,255,255)';
+                    if (percentage <= 5) {
+                        return 'rgb(0,0,0)';
+                    } else if (percentage <= 20) {
+                        return 'rgb(50,20,0)';
+                    } else if (percentage <= 40) {
+                        return 'rgb(139,0,0)';
+                    } else if (percentage <= 60) {
+                        return 'rgb(255,69,0)';
+                    } else if (percentage <= 80) {
+                        return 'rgb(255,140,0)';
+                    } else if (percentage <= 95) {
+                        return 'rgb(255,255,0)';
+                    } else {
+                        return 'rgb(255,255,255)';
+                    }
                 }
             }
 
@@ -218,6 +236,9 @@
                         return;
                     }
 
+                    const numDisks = parseInt(data[2]);
+                    const totalCores = parseInt(data[1]) * 3 + 2*3;
+
                     data.forEach((value, col) => {
                         if (col === 0) {
                             if (timeWidth == 0) return;
@@ -227,7 +248,7 @@
                                 offScreenCtx.fillStyle = 'white';
                                 offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
                             }
-                        } else if (col === 1) {
+                        } else if (col === 1 || col === 2) {
                             return;
                         } else {
                             if (value === "" || value === "|") {
@@ -236,7 +257,8 @@
                             }
                             const x = Math.floor(coreIndex * rectSize + timeWidth);
                             const y = Math.floor(yOffset);
-                            let color = getFlameColor(parseFloat(value));
+                            const isDisk = coreIndex >= totalCores;
+                            let color = getFlameColor(parseFloat(value), isDisk);
                             offScreenCtx.fillStyle = color;
                             offScreenCtx.fillRect(x, y, rectSize, rectSize);
                             coreIndex++;

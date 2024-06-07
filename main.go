@@ -36,12 +36,20 @@ type CPUCore struct {
 	Usage CPUUsage
 }
 
+type DiskStats struct {
+	Device   string
+	ReadIOs  uint64
+	WriteIOs uint64
+	IoTime   uint64
+}
+
 var (
 	usageHistory  = make([]string, 0)
 	historyMutex  sync.Mutex
 	clients       = make(map[*websocket.Conn]bool)
 	clientsMutex  sync.Mutex
 	previousUsage []CPUCore
+	prevDiskStats map[string]DiskStats
 	interval      time.Duration
 	host          string
 	port          string
@@ -49,6 +57,8 @@ var (
 	rectSize      = 20
 	cpuCores      = make(map[int][]CPUCore) // Map of NUMA nodes to cores
 	numCPUs       int
+	numDisks      int
+	diskDevices   []string
 )
 
 // readCPUUsage reads the CPU usage from the /proc/stat file.
@@ -114,6 +124,91 @@ func calculatePercentage(current, previous []CPUCore) []CPUCore {
 	return result
 }
 
+// GetPhysicalBlockDevices returns a list of physical block devices (SSD/HDD)
+func GetPhysicalBlockDevices() ([]string, error) {
+	var devices []string
+	sysBlockPath := "/sys/class/block/"
+	entries, err := os.ReadDir(sysBlockPath)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "vd") || strings.HasPrefix(entry.Name(), "sd") ||
+			strings.HasPrefix(entry.Name(), "nvm") || strings.HasPrefix(entry.Name(), "nvme") {
+			// Check if not a partition
+			if fileExists(sysBlockPath + entry.Name() + "/partition") {
+				continue
+			}
+			devices = append(devices, entry.Name())
+		}
+	}
+	return devices, nil
+}
+
+// fileExists checks if a file exists and is not a directory
+func fileExists(filename string) bool {
+	info, err := os.Stat(filename)
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// GetDiskStats reads /proc/diskstats and returns the statistics for the specified devices
+func GetDiskStats(devices []string) (map[string]DiskStats, error) {
+	file, err := os.Open("/proc/diskstats")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	stats := make(map[string]DiskStats)
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 14 {
+			continue
+		}
+
+		device := fields[2]
+		if contains(devices, device) {
+			readIOs, _ := strconv.ParseUint(fields[3], 10, 64)
+			writeIOs, _ := strconv.ParseUint(fields[7], 10, 64)
+			ioTime, _ := strconv.ParseUint(fields[12], 10, 64)
+			stats[device] = DiskStats{Device: device, ReadIOs: readIOs, WriteIOs: writeIOs, IoTime: ioTime}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return stats, nil
+}
+
+// contains checks if a slice contains a specific string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// CalculateUtilization calculates the %util for each device
+func CalculateUtilization(prevStats, currStats map[string]DiskStats, interval float64) map[string]float64 {
+	utilization := make(map[string]float64)
+
+	for device, currStat := range currStats {
+		if prevStat, ok := prevStats[device]; ok {
+			ioTimeDelta := float64(currStat.IoTime - prevStat.IoTime)
+			utilization[device] = (ioTimeDelta / (interval * 1000.0)) * 100.0
+		}
+	}
+	return utilization
+}
+
 // handleConnections handles incoming WebSocket connections and sends current CPU usage data.
 func handleConnections(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
@@ -146,26 +241,52 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// broadcastUsage sends the current CPU usage to all connected clients.
+// broadcastUsage sends the current CPU and disk usage to all connected clients.
 func broadcastUsage() {
 	for {
 		time.Sleep(interval)
 
-		currentUsage, err := readCPUUsage()
-		if err != nil {
-			fmt.Println("Error reading CPU usage:", err)
+		var cpuUsage []CPUCore
+		var diskStats map[string]DiskStats
+		var errCPU, errDisk error
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			cpuUsage, errCPU = readCPUUsage()
+		}()
+
+		go func() {
+			defer wg.Done()
+			diskStats, errDisk = GetDiskStats(diskDevices)
+		}()
+
+		wg.Wait()
+
+		if errCPU != nil {
+			fmt.Println("Error reading CPU usage:", errCPU)
 			return
 		}
 
-		percentageUsage := calculatePercentage(currentUsage, previousUsage)
-		previousUsage = currentUsage
+		if errDisk != nil {
+			fmt.Println("Error reading disk stats:", errDisk)
+			return
+		}
+
+		percentageUsage := calculatePercentage(cpuUsage, previousUsage)
+		previousUsage = cpuUsage
+
+		diskUtilization := CalculateUtilization(prevDiskStats, diskStats, interval.Seconds())
+		prevDiskStats = diskStats
 
 		// Get current time with milliseconds
 		currentTime := time.Now().Format("15:04:05.000")
 
 		// Convert usage to CSV format using csv.Writer
 		var csvData [][]string
-		header := []string{currentTime, strconv.Itoa(numCPUs)}
+		header := []string{currentTime, strconv.Itoa(numCPUs), strconv.Itoa(numDisks)}
 
 		// Add user percentage values
 		for _, core := range percentageUsage {
@@ -182,6 +303,14 @@ func broadcastUsage() {
 		// Add idle percentage values (inverted)
 		for _, core := range percentageUsage {
 			header = append(header, strconv.FormatFloat(core.Usage.Idle, 'f', 2, 64))
+		}
+
+		header = append(header, "", "") // background-colored spaces
+
+		// Add disk utilization values
+		for _, device := range diskDevices {
+			util := diskUtilization[device]
+			header = append(header, strconv.FormatFloat(util, 'f', 2, 64))
 		}
 
 		csvData = append(csvData, header)
@@ -256,9 +385,16 @@ func main() {
 		return
 	}
 
+	diskDevices, err = GetPhysicalBlockDevices()
+	if err != nil {
+		fmt.Println("Error getting block devices:", err)
+		return
+	}
+	numDisks = len(diskDevices)
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		intervalMsec := interval.Milliseconds()
-		numDataRows := 3*numCPUs + 3*2
+		numDataRows := 3 + 3*numCPUs + numDisks + 3*2
 		fmt.Fprintf(w, HtmlContent, rectSize, historyLength, numDataRows, intervalMsec)
 	})
 	http.HandleFunc("/ws", handleConnections)
