@@ -46,15 +46,44 @@
         <div id="overlay">Paused</div>
     </div>
     <script>
+        /* Incoming data format:
+         * 0: Time
+         * 1: Number of CPU cores (numCPUs)
+         * 2: Number of disks (numDisks)
+         * 3: CPU0 user percentage
+         * ...
+         * 3 + numCPUs: CPU{numCPU} user percentage
+         * 3 + numCPUs + 3: CPU0 system percentage
+         * ...
+         * 3 + numCPUs + 3 + numCPUs: CPU{numCPU} system percentage
+         * 3 + numCPUs + 3 + numCPUs + 3: CPU0 idle percentage
+         * ...
+         * 3 + numCPUs + 3 + numCPUs + 3 + numCPUs: CPU{numCPU} idle percentage
+         * 3 + numCPUs + 3 + numCPUs + 3 + numCPUs + 3: Disk0 percentage
+         * ...
+         * 3 + numCPUs + 3 + numCPUs + 3 + numCPUs + 3 + numDisks: Disk{numDisk} percentage
+         * 
+         * The data is expected to be in CSV format.
+         */
         document.addEventListener("DOMContentLoaded", function () {
             const canvas = document.getElementById('resCanvas');
             const overlay = document.getElementById('overlay');
-            const ctx = canvas.getContext('2d');
+            let gl = canvas.getContext('webgl');
+
+            if (!gl) {
+                alert("WebGL not supported, falling back on experimental-webgl");
+                gl = canvas.getContext('experimental-webgl');
+            }
+            if (!gl) {
+                alert("Your browser does not support WebGL");
+                return;
+            }
+
             let rectSize = %d;
-            const origHistoryLength = %d;
+            const serverHistoryLength = %d;
             let numDataRows = %d;
-            let historyLength = origHistoryLength;
-            let timeWidth = rectSize * 9;
+            let historyLength = serverHistoryLength;
+            let timeWidth = 0; // TODO
             let dataInterval = %d;
             let history = [];
             let isPaused = false;
@@ -66,8 +95,7 @@
             let targetFPS = 50;
             let minFPS = 30;
             let scrollSpeed = 1;
-            const offScreenCanvas = document.createElement('canvas');
-            const offScreenCtx = offScreenCanvas.getContext('2d');
+
             var socket;
             function connect() {
                 socket = new WebSocket('ws://' + window.location.host + '/ws');
@@ -87,7 +115,7 @@
                     const data = event.data.split(",");
                     if (data.length > 0) {
                         if (dataQueue.length >= historyLength) {
-                            dataQueue.shift();  // Remove the oldest data if the queue exceeds history length
+                            dataQueue.shift();
                         }
                         dataQueue.push(data);
                     }
@@ -97,7 +125,7 @@
 
             document.title = window.location.host;
 
-            canvas.height = origHistoryLength * rectSize - rectSize;
+            canvas.height = serverHistoryLength * rectSize - rectSize;
 
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('rectSize')) {
@@ -126,19 +154,17 @@
             }
 
             function updateCanvasDimensions() {
-                let newHeight = origHistoryLength * rectSize - rectSize;
+                let newHeight = historyLength * rectSize;
                 if (canvas.height !== newHeight) {
+                    console.log('new canvas height:', newHeight);
                     canvas.height = newHeight;
-                }
-                let newOffScreenHeight = historyLength * rectSize - rectSize;
-                if (offScreenCanvas.height !== newOffScreenHeight) {
-                    offScreenCanvas.height = newOffScreenHeight;
                 }
                 let newWidth = numDataRows * rectSize + timeWidth;
                 if (canvas.width !== newWidth) {
+                    console.log('new canvas width:', newWidth);
                     canvas.width = newWidth;
-                    offScreenCanvas.width = canvas.width;
                 }
+                gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
             }
 
             function adjustRectSize() {
@@ -153,7 +179,7 @@
                     rectSize = maxRectSize;
                 }
                 console.log('new rectSize:', rectSize);
-                timeWidth = rectSize * 9;
+                timeWidth = 0; // TODO
                 if (rectSize <= 5) {
                     timeWidth = 0;
                 }
@@ -162,45 +188,114 @@
                 updateCanvasDimensions();
             }
 
-            function getFlameColor(percentage, isDisk) {
-                if (isDisk) {
-                    if (percentage <= 5) {
-                        return 'rgb(0,0,0)';
-                    } else if (percentage <= 20) {
-                        return 'rgb(0,50,0)';
-                    } else if (percentage <= 40) {
-                        return 'rgb(0,139,0)';
-                    } else if (percentage <= 60) {
-                        return 'rgb(0,255,0)';
-                    } else if (percentage <= 80) {
-                        return 'rgb(0,255,140)';
-                    } else if (percentage <= 95) {
-                        return 'rgb(0,255,255)';
-                    } else {
-                        return 'rgb(255,255,255)';
-                    }
+            function getFlameColorDisk(percentage) {
+                if (percentage <= 5) {
+                    return [0, 0, 0];
+                } else if (percentage <= 20) {
+                    return [0, 50, 0];
+                } else if (percentage <= 40) {
+                    return [0, 139, 0];
+                } else if (percentage <= 60) {
+                    return [0, 255, 0];
+                } else if (percentage <= 80) {
+                    return [0, 255, 140];
+                } else if (percentage <= 95) {
+                    return [0, 255, 255];
                 } else {
-                    if (percentage <= 5) {
-                        return 'rgb(0,0,0)';
-                    } else if (percentage <= 20) {
-                        return 'rgb(50,20,0)';
-                    } else if (percentage <= 40) {
-                        return 'rgb(139,0,0)';
-                    } else if (percentage <= 60) {
-                        return 'rgb(255,69,0)';
-                    } else if (percentage <= 80) {
-                        return 'rgb(255,140,0)';
-                    } else if (percentage <= 95) {
-                        return 'rgb(255,255,0)';
-                    } else {
-                        return 'rgb(255,255,255)';
-                    }
+                    return [255, 255, 255];
                 }
             }
 
-            function draw() {
-                if (history.length === 0) return;
+            function getFlameColor(percentage) {
+                if (percentage <= 5) {
+                    return [0, 0, 0];
+                } else if (percentage <= 20) {
+                    return [50, 20, 0];
+                } else if (percentage <= 40) {
+                    return [139, 0, 0];
+                } else if (percentage <= 60) {
+                    return [255, 69, 0];
+                } else if (percentage <= 80) {
+                    return [255, 140, 0];
+                } else if (percentage <= 95) {
+                    return [255, 255, 0];
+                } else {
+                    return [255, 255, 255];
+                }
+            }
 
+            function initShaderProgram(gl, vsSource, fsSource) {
+                const vertexShader = loadShader(gl, gl.VERTEX_SHADER, vsSource);
+                const fragmentShader = loadShader(gl, gl.FRAGMENT_SHADER, fsSource);
+
+                const shaderProgram = gl.createProgram();
+                gl.attachShader(shaderProgram, vertexShader);
+                gl.attachShader(shaderProgram, fragmentShader);
+                gl.linkProgram(shaderProgram);
+
+                if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+                    alert('Unable to initialize the shader program: ' + gl.getProgramInfoLog(shaderProgram));
+                    return null;
+                }
+
+                return shaderProgram;
+            }
+
+            function loadShader(gl, type, source) {
+                const shader = gl.createShader(type);
+
+                gl.shaderSource(shader, source);
+                gl.compileShader(shader);
+
+                if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                    alert('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));
+                    gl.deleteShader(shader);
+                    return null;
+                }
+
+                return shader;
+            }
+
+            const vsSource = `
+                attribute vec4 aVertexPosition;
+                void main(void) {
+                    gl_Position = aVertexPosition;
+                }
+            `;
+
+            const fsSource = `
+                precision mediump float;
+                uniform vec3 uColor;
+                void main(void) {
+                    gl_FragColor = vec4(uColor, 1.0);
+                }
+            `;
+
+            const shaderProgram = initShaderProgram(gl, vsSource, fsSource);
+
+            const programInfo = {
+                program: shaderProgram,
+                attribLocations: {
+                    vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
+                },
+                uniformLocations: {
+                    color: gl.getUniformLocation(shaderProgram, 'uColor'),
+                },
+            };
+
+            function initBuffers(gl) {
+                const positionBuffer = gl.createBuffer();
+                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+                
+                return {
+                    position: positionBuffer,
+                };
+            }
+
+            const clearTimeout = dataInterval*serverHistoryLength;
+
+            function render() {
+                const buffers = initBuffers(gl);
                 const redrawStartTime = performance.now();
                 const elapsed = redrawStartTime - lastUpdateTime;
                 lastUpdateTime = redrawStartTime;
@@ -211,6 +306,11 @@
                     scrollOffset -= rectSize;
                     if (dataQueue.length === 0) {
                         history.unshift([...history[0]]);
+                        setTimeout(() => {
+                            while (history.length > historyLength) {
+                                history.pop();
+                            }
+                        }, clearTimeout);
                     } else {
                         const newData = dataQueue.shift();
                         history.unshift(newData);
@@ -220,61 +320,91 @@
                     }
                 }
 
-                offScreenCtx.clearRect(0, 0, offScreenCanvas.width, offScreenCanvas.height);
-                offScreenCtx.font = `${rectSize}px monospace`;
+                let displayedHistory = history.slice(0, historyLength);
 
-                const displayedHistory = history.slice(0, historyLength);
+                const positions = [];
 
-                offScreenCtx.save();
-                offScreenCtx.translate(0, Math.floor(scrollOffset));
-
-                displayedHistory.forEach((data, row) => {
+                for (let row = 0; row < displayedHistory.length; row++) {
+                    const yOffset = 1 - ((row * rectSize + scrollOffset) / canvas.height * 2);
+                    if (yOffset < -1 || yOffset - rectSize / canvas.height * 2 > 1) continue;
+                    const data = displayedHistory[row];
                     let coreIndex = 0;
-                    const yOffset = Math.floor(row * rectSize);
+                    data.forEach((value, col) => {
+                        if (col === 0 || col === 1 || col === 2) return;
+                        if (value === "" || value === "|") {
+                            coreIndex++;
+                            return;
+                        }
+                        const xOffset = (coreIndex * rectSize + timeWidth) / canvas.width * 2 - 1;
+                        const width = rectSize / canvas.width * 2;
+                        const height = rectSize / canvas.height * 2;
 
-                    if (yOffset + rectSize <= 0 || yOffset >= canvas.height) {
-                        return;
-                    }
+                        positions.push(xOffset, yOffset);
+                        positions.push(xOffset + width, yOffset);
+                        positions.push(xOffset, yOffset - height);
+                        positions.push(xOffset + width, yOffset - height);
 
-                    const numDisks = parseInt(data[2]);
-                    const totalCores = parseInt(data[1]) * 3 + 2*3;
+                        coreIndex++;
+                    });
+                }
 
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+                gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+                gl.useProgram(programInfo.program);
+
+                const numComponents = 2;  // Changed to 2 components to match the vertex position setup
+                const type = gl.FLOAT;
+                const normalize = false;
+                const stride = 0;
+                const offset = 0;
+                
+                //gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+                gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, numComponents, type, normalize, stride, offset);
+                gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+                let vertexCount = 0;
+                let diskBoundary = parseInt(displayedHistory[0][1]) * 3 + 3*2;
+                for (let row = 0; row < displayedHistory.length; row++) {
+                    const data = displayedHistory[row];
+                    let coreIndex = 0;
                     data.forEach((value, col) => {
                         if (col === 0) {
-                            if (timeWidth == 0) return;
-                            const x = 2;
-                            const y = Math.floor(yOffset + rectSize - 2);
-                            if (value) {
-                                offScreenCtx.fillStyle = 'white';
-                                offScreenCtx.fillText(value.padEnd(12, '0'), x, y);
-                            }
-                        } else if (col === 1 || col === 2) {
+                            // Time text display (skipped for now)
                             return;
-                        } else {
-                            if (value === "" || value === "|") {
-                                coreIndex++;
-                                return;
-                            }
-                            const x = Math.floor(coreIndex * rectSize + timeWidth);
-                            const y = Math.floor(yOffset);
-                            const isDisk = coreIndex >= totalCores;
-                            let color = getFlameColor(parseFloat(value), isDisk);
-                            offScreenCtx.fillStyle = color;
-                            offScreenCtx.fillRect(x, y, rectSize, rectSize);
-                            coreIndex++;
                         }
+                        if (col === 1 || col === 2) return;
+                        if (value === "" || value === "|") {
+                            coreIndex++;
+                            return;
+                        }
+                        const percentage = parseFloat(value);
+                        let color;
+                        if (coreIndex >= diskBoundary) {
+                            color = getFlameColorDisk(percentage);
+                        } else {
+                            color = getFlameColor(percentage);
+                        }
+                        gl.uniform3f(programInfo.uniformLocations.color, color[0] / 255, color[1] / 255, color[2] / 255);
+                        gl.drawArrays(gl.TRIANGLE_STRIP, vertexCount, 4);
+                        vertexCount += 4;
+                        coreIndex++;
                     });
-                });
+                }
 
-                offScreenCtx.restore();
-                offScreenCtx.clearRect(0, 0, offScreenCanvas.width, rectSize);
-                offScreenCtx.clearRect(0, offScreenCanvas.height - rectSize, offScreenCanvas.width, offScreenCanvas.height);
-
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                ctx.drawImage(offScreenCanvas, 0, 0);
+                gl.enable(gl.SCISSOR_TEST);
+                gl.scissor(0, gl.canvas.height - rectSize, gl.canvas.width, rectSize);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.disable(gl.SCISSOR_TEST);
+                gl.enable(gl.SCISSOR_TEST);
+                gl.scissor(0, gl.canvas.height - rectSize*(historyLength+1), gl.canvas.width, rectSize);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.disable(gl.SCISSOR_TEST);
 
                 if (!isPaused) {
-                    animationFrameId = requestAnimationFrame(draw);
+                    animationFrameId = requestAnimationFrame(render);
                 }
             }
 
@@ -287,15 +417,15 @@
                         if (history.length < historyLength) {
                             historyLength = history.length;
                         }
-                        historyLength = Math.max(Math.min(origHistoryLength, 30), historyLength - 1);
+                        historyLength = Math.max(Math.min(serverHistoryLength, 30), historyLength - Math.max(5, Math.round(historyLength/8)));
                         historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
-                        if (historyLength < origHistoryLength)
+                        if (historyLength < serverHistoryLength)
                             updateCanvasDimensions();
                     }
                     console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
                 } else if (!isPaused && targetFPS < maxFPS && actualFrameTime < frameTime * 0.3) {
                     if (historyLength < Math.round(window.innerHeight / rectSize)) {
-                        historyLength = Math.min(origHistoryLength, historyLength + 50);
+                        historyLength = Math.min(serverHistoryLength, historyLength + 50);
                         historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
                         updateCanvasDimensions();
                     } else {
@@ -303,7 +433,7 @@
                     }
                     console.log(`Increasing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
                 }
-                setTimeout(adjustFrameRate, dataInterval);
+                setTimeout(adjustFrameRate, frameTime);
             }
 
             function handleVisibilityChange() {
@@ -312,7 +442,7 @@
                         lastUpdateTime = performance.now();
                         scrollOffset = 0;
                         if (!isPaused) {
-                            animationFrameId = requestAnimationFrame(draw);
+                            animationFrameId = requestAnimationFrame(render);
                         }
                     });
                 } else {
@@ -327,7 +457,7 @@
                     fetchHistory().then(() => {
                         lastUpdateTime = performance.now();
                         scrollOffset = 0;
-                        animationFrameId = requestAnimationFrame(draw);
+                        animationFrameId = requestAnimationFrame(render);
                     });
                 } else {
                     overlay.style.display = 'flex';
@@ -338,29 +468,42 @@
 
             function clearDataQueuePeriodically() {
                 setInterval(() => {
-                    if (dataQueue.length > historyLength) {
-                        dataQueue = dataQueue.slice(-historyLength);
+                    while (dataQueue.length > serverHistoryLength) {
+                        dataQueue = dataQueue.slice(-serverHistoryLength);
                     }
-                }, 5000);
+                }, clearTimeout);
             }
 
             function adjustRectSizeEvent(event) {
                 if (event.deltaY < 0) {
                     rectSize += 1;
                 } else {
-                    if (rectSize >= 1)
+                    if (rectSize > 1)
                         rectSize -= 1;
                 }
                 adjustRectSize();
             }
 
-            document.onwheel = adjustRectSizeEvent;
+            // TODO, for now, just ignore the damn thing, do as little weird shit as possible
+            function touchStartEvent(event) {
+                e.preventDefault();
+            }
+            function touchMoveEvent(event) {
+                e.preventDefault();
+            }
+            function touchEndEvent(event) {
+                e.preventDefault();
+            }
 
+            document.onwheel = adjustRectSizeEvent;
             document.addEventListener("click", togglePause);
             document.addEventListener("visibilitychange", handleVisibilityChange);
+            canvas.addEventListener("touchend", touchEndEvent);
+            canvas.addEventListener("touchmove", touchMoveEvent);
+            canvas.addEventListener("touchstart", touchStartEvent);
 
             fetchHistory().then(() => {
-                animationFrameId = requestAnimationFrame(draw);
+                animationFrameId = requestAnimationFrame(render);
             });
             clearDataQueuePeriodically();
             adjustRectSize();
