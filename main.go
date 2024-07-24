@@ -364,7 +364,7 @@ func main() {
 	flag.StringVar(&url, "url", "", "By which URL is this service accessible")
 	flag.StringVar(&host, "host", "0.0.0.0", "Host address")
 	flag.StringVar(&port, "port", "8080", "Port number")
-	flag.IntVar(&historyLength, "history", 150, "History length")
+	flag.IntVar(&historyLength, "history", 600, "History length")
 	flag.IntVar(&rectSize, "rectsize", 9, "Rectangle size")
 	flag.Parse()
 
