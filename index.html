@@ -155,6 +155,10 @@
             function fetchHistory() {
                 let historyUrl = serverUrl !== 'default' ? (window.location.protocol + '//' + serverUrl) : '';
                 historyUrl += '/history';
+                if (debugMode) {
+                    console.log('Fetching history from:', historyUrl);
+                    console.log('serverUrl:', serverUrl);
+                }
                 return fetch((historyUrl))
                     .then(response => response.json())
                     .then(data => {
