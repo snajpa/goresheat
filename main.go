@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	_ "embed"
-	"encoding/csv"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
@@ -25,22 +25,22 @@ var upgrader = websocket.Upgrader{
 }
 
 type CPUUsage struct {
-	User float64
-	Sys  float64
-	Idle float64
+	User float64 `json:"user"`
+	Sys  float64 `json:"sys"`
+	Idle float64 `json:"idle"`
 }
 
 type CPUCore struct {
-	Node  int
-	HTID  int
-	Usage CPUUsage
+	Node  int      `json:"node"`
+	HTID  int      `json:"htid"`
+	Usage CPUUsage `json:"usage"`
 }
 
 type DiskStats struct {
-	Device   string
-	ReadIOs  uint64
-	WriteIOs uint64
-	IoTime   uint64
+	Device   string `json:"device"`
+	ReadIOs  uint64 `json:"read_ios"`
+	WriteIOs uint64 `json:"write_ios"`
+	IoTime   uint64 `json:"io_time"`
 }
 
 var (
@@ -53,6 +53,7 @@ var (
 	interval      time.Duration
 	host          string
 	port          string
+	url           string
 	historyLength int
 	rectSize      = 20
 	cpuCores      = make(map[int][]CPUCore) // Map of NUMA nodes to cores
@@ -232,17 +233,15 @@ func handleHistory(w http.ResponseWriter, r *http.Request) {
 	historyMutex.Lock()
 	defer historyMutex.Unlock()
 
-	w.Header().Set("Content-Type", "text/csv")
-	writer := csv.NewWriter(w)
-	defer writer.Flush()
+	w.Header().Set("Content-Type", "application/json")
+	writer := json.NewEncoder(w)
 
-	for _, record := range usageHistory {
-		writer.Write(strings.Split(record, ","))
-	}
+	writer.Encode(usageHistory)
 }
 
 // broadcastUsage sends the current CPU and disk usage to all connected clients.
 func broadcastUsage() {
+	skipFirst := true
 	for {
 		time.Sleep(interval)
 
@@ -281,59 +280,50 @@ func broadcastUsage() {
 		diskUtilization := CalculateUtilization(prevDiskStats, diskStats, interval.Seconds())
 		prevDiskStats = diskStats
 
-		// Get current time with milliseconds
-		currentTime := time.Now().Format("15:04:05.000")
-
-		// Convert usage to CSV format using csv.Writer
-		var csvData [][]string
-		header := []string{currentTime, strconv.Itoa(numCPUs), strconv.Itoa(numDisks)}
-
-		// Add user percentage values
-		for _, core := range percentageUsage {
-			header = append(header, strconv.FormatFloat(core.Usage.User, 'f', 2, 64))
-		}
-		header = append(header, "", "") // background-colored spaces
-
-		// Add sys percentage values
-		for _, core := range percentageUsage {
-			header = append(header, strconv.FormatFloat(core.Usage.Sys, 'f', 2, 64))
-		}
-		header = append(header, "", "") // background-colored spaces
-
-		// Add idle percentage values (inverted)
-		for _, core := range percentageUsage {
-			header = append(header, strconv.FormatFloat(core.Usage.Idle, 'f', 2, 64))
+		usageData := map[string]interface{}{
+			"num_cpu":   numCPUs,
+			"num_disks": numDisks,
+			"cpu_user":  []float64{},
+			"cpu_sys":   []float64{},
+			"cpu_idle":  []float64{},
+			"disk":      []float64{},
+			"time":      time.Now().Format("15:04:05.000"),
 		}
 
-		header = append(header, "", "") // background-colored spaces
+		for _, core := range percentageUsage {
+			usageData["cpu_user"] = append(usageData["cpu_user"].([]float64), core.Usage.User)
+			usageData["cpu_sys"] = append(usageData["cpu_sys"].([]float64), core.Usage.Sys)
+			usageData["cpu_idle"] = append(usageData["cpu_idle"].([]float64), core.Usage.Idle)
+		}
 
-		// Add disk utilization values
 		for _, device := range diskDevices {
 			util := diskUtilization[device]
-			header = append(header, strconv.FormatFloat(util, 'f', 2, 64))
+			usageData["disk"] = append(usageData["disk"].([]float64), util)
 		}
 
-		csvData = append(csvData, header)
-
-		var csvString strings.Builder
-		writer := csv.NewWriter(&csvString)
-		writer.WriteAll(csvData)
-		writer.Flush()
-
-		csvOutput := csvString.String()
+		jsonOutput, err := json.Marshal(usageData)
+		if err != nil {
+			fmt.Println("Error marshaling JSON:", err)
+			return
+		}
 
 		// Store the usage in history
 		historyMutex.Lock()
-		usageHistory = append([]string{strings.TrimSpace(csvOutput)}, usageHistory...)
+		usageHistory = append([]string{string(jsonOutput)}, usageHistory...)
 		if len(usageHistory) > historyLength { // Limit history to historyLength entries
 			usageHistory = usageHistory[:historyLength]
 		}
 		historyMutex.Unlock()
 
+		if skipFirst {
+			skipFirst = false
+			continue
+		}
+
 		// Broadcast to all clients
 		clientsMutex.Lock()
 		for client := range clients {
-			err := client.WriteMessage(websocket.TextMessage, []byte(csvOutput))
+			err := client.WriteMessage(websocket.TextMessage, jsonOutput)
 			if err != nil {
 				client.Close()
 				delete(clients, client)
@@ -373,6 +363,7 @@ func getCPUInfo() error {
 
 func main() {
 	flag.DurationVar(&interval, "interval", 100*time.Millisecond, "Update interval")
+	flag.StringVar(&url, "url", "", "By which URL is this service accessible")
 	flag.StringVar(&host, "host", "0.0.0.0", "Host address")
 	flag.StringVar(&port, "port", "8080", "Port number")
 	flag.IntVar(&historyLength, "history", 150, "History length")
@@ -395,7 +386,11 @@ func main() {
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		intervalMsec := interval.Milliseconds()
 		numDataRows := 3 + 3*numCPUs + numDisks + 3*2
-		fmt.Fprintf(w, HtmlContent, rectSize, historyLength, numDataRows, intervalMsec)
+		urlParam := "default"
+		if url != "" {
+			urlParam = url
+		}
+		fmt.Fprintf(w, HtmlContent, rectSize, historyLength, numDataRows, intervalMsec, urlParam)
 	})
 	http.HandleFunc("/ws", handleConnections)
 	http.HandleFunc("/history", handleHistory)
