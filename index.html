@@ -442,7 +442,7 @@
             function adjustFrameRate() {
                 const frameTime = 1000 / targetFPS;
                 const actualFrameTime = performance.now() - lastUpdateTime;
-                if (!isPaused && actualFrameTime > frameTime * 2.7) {
+                if (!isPaused && actualFrameTime > frameTime * 2) {
                     targetFPS = Math.max(minFPS, targetFPS - 1);
                     if (targetFPS <= minFPS) {
                         historyLength = Math.max(Math.min(serverHistoryLength, 30), historyLength - Math.max(5, Math.round(historyLength / 10)));
@@ -452,7 +452,7 @@
                     if (debugMode) {
                         console.log(`Reducing workload, FPS to: ${targetFPS}, history length to: ${historyLength}`);
                     }
-                } else if (!isPaused && targetFPS < maxFPS && actualFrameTime < frameTime * 0.4) {
+                } else if (!isPaused && targetFPS < maxFPS && actualFrameTime < frameTime * 0.7) {
                     if (historyLength < Math.round(window.innerHeight / rectSize)) {
                         historyLength = Math.min(serverHistoryLength, historyLength + 50);
                         historyLength = Math.min(Math.round(window.innerHeight / rectSize), historyLength);
