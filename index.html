@@ -98,7 +98,8 @@
 
             const urlParams = new URLSearchParams(window.location.search);
             const debugMode = urlParams.has('debug') && urlParams.get('debug') === 'true';
-            const serverUrl = '%s';
+            let serverUrl = '%s';
+            serverUrl = serverUrl.replace(/(^\w+:|^)\/\//, '');
             let websocketUrl = serverUrl !== 'default' ? serverUrl : window.location.host;
             websocketUrl = window.location.protocol === 'https:' ? 'wss://' + websocketUrl : 'ws://' + websocketUrl;
 
@@ -152,6 +153,7 @@
             }
 
             function fetchHistory() {
+                let historyUrl = serverUrl !== 'default' ? (window.location.protocol + '//' + serverUrl) : '';
                 return fetch((serverUrl !== 'default' ? serverUrl : '') + '/history')
                     .then(response => response.json())
                     .then(data => {
