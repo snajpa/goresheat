@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,23 +126,20 @@ func calculatePercentage(current, previous []CPUCore) []CPUCore {
 	return result
 }
 
-// GetPhysicalBlockDevices returns a list of physical block devices (SSD/HDD)
+// GetPhysicalBlockDevices returns a list of physical block devices (SSD/HDD/virtio)
 func GetPhysicalBlockDevices() ([]string, error) {
 	var devices []string
-	sysBlockPath := "/sys/class/block/"
-	entries, err := os.ReadDir(sysBlockPath)
+	devDir := "/dev/"
+	entries, err := os.ReadDir(devDir)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "vd") || strings.HasPrefix(entry.Name(), "sd") ||
-			strings.HasPrefix(entry.Name(), "nvm") || strings.HasPrefix(entry.Name(), "nvme") {
-			// Check if not a partition
-			if fileExists(sysBlockPath + entry.Name() + "/partition") {
-				continue
+		if matched, _ := regexp.MatchString("^(vd[a-z]+)$|^(sd[a-z]+)$|^(nvme\\d+n\\d+)$", entry.Name()); matched {
+			if !contains(devices, entry.Name()) {
+				devices = append(devices, entry.Name())
 			}
-			devices = append(devices, entry.Name())
 		}
 	}
 	return devices, nil
