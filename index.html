@@ -290,16 +290,19 @@
 
             const vsSource = `
                 attribute vec4 aVertexPosition;
+                attribute vec3 aVertexColor;
+                varying vec3 vColor;
                 void main(void) {
                     gl_Position = aVertexPosition;
+                    vColor = aVertexColor;
                 }
             `;
 
             const fsSource = `
                 precision mediump float;
-                uniform vec3 uColor;
+                varying vec3 vColor;
                 void main(void) {
-                    gl_FragColor = vec4(uColor, 1.0);
+                    gl_FragColor = vec4(vColor, 1.0);
                 }
             `;
 
@@ -316,18 +319,17 @@
                 program: shaderProgram,
                 attribLocations: {
                     vertexPosition: gl.getAttribLocation(shaderProgram, 'aVertexPosition'),
-                },
-                uniformLocations: {
-                    color: gl.getUniformLocation(shaderProgram, 'uColor'),
+                    vertexColor: gl.getAttribLocation(shaderProgram, 'aVertexColor'),
                 },
             };
 
             function initBuffers(gl) {
                 const positionBuffer = gl.createBuffer();
-                gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-                
+                const colorBuffer = gl.createBuffer();
+
                 return {
                     position: positionBuffer,
+                    color: colorBuffer,
                 };
             }
 
@@ -383,10 +385,16 @@
                             const width = rectSize / canvas.width * 2;
                             const height = rectSize / canvas.height * 2;
 
-                            positions.push(xOffset, yOffset);
-                            positions.push(xOffset + width, yOffset);
-                            positions.push(xOffset, yOffset - height);
-                            positions.push(xOffset + width, yOffset - height);
+                            // Define two triangles per rectangle
+                            positions.push(
+                                xOffset, yOffset,
+                                xOffset + width, yOffset,
+                                xOffset, yOffset - height,
+
+                                xOffset + width, yOffset,
+                                xOffset + width, yOffset - height,
+                                xOffset, yOffset - height
+                            );
 
                             let color;
                             if (section === 'disk') {
@@ -394,7 +402,10 @@
                             } else {
                                 color = getFlameColor(percentage);
                             }
-                            colors.push(...color, ...color, ...color, ...color);
+                            // Push color for each vertex
+                            for (let i = 0; i < 6; i++) {
+                                colors.push(color[0] / 255, color[1] / 255, color[2] / 255);
+                            }
 
                             coreIndex++;
                         }
@@ -406,24 +417,39 @@
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
                 gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
 
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.color);
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+
                 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
                 gl.useProgram(programInfo.program);
 
-                const numComponents = 2;
-                const type = gl.FLOAT;
-                const normalize = false;
-                const stride = 0;
-                const offset = 0;
-
-                gl.vertexAttribPointer(programInfo.attribLocations.vertexPosition, numComponents, type, normalize, stride, offset);
+                // Position attribute
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+                gl.vertexAttribPointer(
+                    programInfo.attribLocations.vertexPosition,
+                    2,
+                    gl.FLOAT,
+                    false,
+                    0,
+                    0
+                );
                 gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
 
-                for (let i = 0; i < positions.length / (2 * 4); i++) {
-                    const color = colors.slice(i * 12, i * 12 + 12);
-                    gl.uniform3f(programInfo.uniformLocations.color, color[0] / 255, color[1] / 255, color[2] / 255);
-                    gl.drawArrays(gl.TRIANGLE_STRIP, i * 4, 4);
-                }
+                // Color attribute
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.color);
+                gl.vertexAttribPointer(
+                    programInfo.attribLocations.vertexColor,
+                    3,
+                    gl.FLOAT,
+                    false,
+                    0,
+                    0
+                );
+                gl.enableVertexAttribArray(programInfo.attribLocations.vertexColor);
+
+                // Draw all rectangles in one call
+                gl.drawArrays(gl.TRIANGLES, 0, positions.length / 2);
 
                 gl.enable(gl.SCISSOR_TEST);
                 gl.scissor(0, gl.canvas.height - rectSize, gl.canvas.width, rectSize);
