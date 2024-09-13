@@ -125,7 +125,14 @@
                 socket.onmessage = function(event) {
                     if (isPaused) return;
 
-                    const data = JSON.parse(event.data);
+                    let data = JSON.parse(event.data);
+                    // Normalize keys to lowercase
+                    const normalizedData = {};
+                    for (let key in data) {
+                        normalizedData[key.toLowerCase()] = data[key];
+                    }
+                    data = normalizedData;
+
                     if (debugMode) {
                         console.log('Incoming data:', data);
                     }
@@ -162,7 +169,14 @@
                 return fetch((historyUrl))
                     .then(response => response.json())
                     .then(data => {
-                        history = data.map(row => JSON.parse(row));
+                        history = data.map(row => {
+                            const parsedRow = JSON.parse(row);
+                            const normalizedRow = {};
+                            for (let key in parsedRow) {
+                                normalizedRow[key.toLowerCase()] = parsedRow[key];
+                            }
+                            return normalizedRow;
+                        });
                         if (history.length > historyLength) {
                             history = history.slice(0, historyLength);
                         }
@@ -560,16 +574,16 @@
 
             function generateLabels() {
                 labelsContainer.innerHTML = '';
-                const sections = ['CPU_USER', 'CPU_SYS', 'CPU_IDLE', 'DISK'];
+                const sections = ['cpu_user', 'cpu_sys', 'cpu_idle', 'disk'];
                 const dataRowExample = history[0] || {};
                 let coreIndex = 0;
 
                 for (let section of sections) {
-                    const values = dataRowExample[section.toLowerCase()] || [];
+                    const values = dataRowExample[section] || [];
                     values.forEach((value, index) => {
                         const label = document.createElement('div');
                         label.className = 'label';
-                        label.innerText = `${section}_${index}`;
+                        label.innerText = `${section.toUpperCase()}_${index}`;
                         label.style.width = `${rectSize}px`;
                         label.style.height = `${rectSize}px`;
                         label.style.left = `${(coreIndex + index + 1) * rectSize}px`;
