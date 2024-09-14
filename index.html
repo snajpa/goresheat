@@ -364,6 +364,55 @@
             let percentages = new Float32Array(maxVertices);
             let isDisks = new Float32Array(maxVertices);
 
+            // Double buffering
+            let positionsBufferIndex = 0;
+            let percentagesBufferIndex = 0;
+            let isDisksBufferIndex = 0;
+
+            // Precompute constants
+            let rectWidth, rectHeight;
+
+            // Set up attributes once
+            function setupAttributes() {
+                gl.useProgram(programInfo.program);
+
+                // Position attribute
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
+                gl.vertexAttribPointer(
+                    programInfo.attribLocations.vertexPosition,
+                    2,
+                    gl.FLOAT,
+                    false,
+                    0,
+                    0
+                );
+                gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
+
+                // Percentage attribute
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.percentage);
+                gl.vertexAttribPointer(
+                    programInfo.attribLocations.percentage,
+                    1,
+                    gl.FLOAT,
+                    false,
+                    0,
+                    0
+                );
+                gl.enableVertexAttribArray(programInfo.attribLocations.percentage);
+
+                // IsDisk attribute
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.isDisk);
+                gl.vertexAttribPointer(
+                    programInfo.attribLocations.isDisk,
+                    1,
+                    gl.FLOAT,
+                    false,
+                    0,
+                    0
+                );
+                gl.enableVertexAttribArray(programInfo.attribLocations.isDisk);
+            }
+
             function render() {
                 const redrawStartTime = performance.now();
                 const elapsed = redrawStartTime - lastUpdateTime;
@@ -399,8 +448,9 @@
                 let percentageIndex = 0;
                 let isDiskIndex = 0;
 
-                const rectWidth = rectSize / canvas.width * 2;
-                const rectHeight = rectSize / canvas.height * 2;
+                // Precompute constants
+                rectWidth = rectSize / canvas.width * 2;
+                rectHeight = rectSize / canvas.height * 2;
 
                 for (let row = 0; row < displayedHistory.length; row++) {
                     const yOffset = 1 - ((row * rectSize + scrollOffset) / canvas.height * 2);
@@ -443,66 +493,32 @@
                     }
                 }
 
-                // Update buffers with subdata
+                // Orphan the buffers before updating
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
-                gl.bufferSubData(gl.ARRAY_BUFFER, 0, positions.subarray(0, positionIndex));
+                gl.bufferData(gl.ARRAY_BUFFER, positions.subarray(0, positionIndex), gl.DYNAMIC_DRAW);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffers.percentage);
-                gl.bufferSubData(gl.ARRAY_BUFFER, 0, percentages.subarray(0, percentageIndex));
+                gl.bufferData(gl.ARRAY_BUFFER, percentages.subarray(0, percentageIndex), gl.DYNAMIC_DRAW);
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffers.isDisk);
-                gl.bufferSubData(gl.ARRAY_BUFFER, 0, isDisks.subarray(0, isDiskIndex));
+                gl.bufferData(gl.ARRAY_BUFFER, isDisks.subarray(0, isDiskIndex), gl.DYNAMIC_DRAW);
 
                 gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-
-                gl.useProgram(programInfo.program);
-
-                // Position attribute
-                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.position);
-                gl.vertexAttribPointer(
-                    programInfo.attribLocations.vertexPosition,
-                    2,
-                    gl.FLOAT,
-                    false,
-                    0,
-                    0
-                );
-                gl.enableVertexAttribArray(programInfo.attribLocations.vertexPosition);
-
-                // Percentage attribute
-                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.percentage);
-                gl.vertexAttribPointer(
-                    programInfo.attribLocations.percentage,
-                    1,
-                    gl.FLOAT,
-                    false,
-                    0,
-                    0
-                );
-                gl.enableVertexAttribArray(programInfo.attribLocations.percentage);
-
-                // IsDisk attribute
-                gl.bindBuffer(gl.ARRAY_BUFFER, buffers.isDisk);
-                gl.vertexAttribPointer(
-                    programInfo.attribLocations.isDisk,
-                    1,
-                    gl.FLOAT,
-                    false,
-                    0,
-                    0
-                );
-                gl.enableVertexAttribArray(programInfo.attribLocations.isDisk);
 
                 // Draw all rectangles in one call
                 gl.drawArrays(gl.TRIANGLES, 0, positionIndex / 2);
 
+                // Optimized scissoring
                 gl.enable(gl.SCISSOR_TEST);
+
+                // Clear the topmost row
                 gl.scissor(0, gl.canvas.height - rectSize, gl.canvas.width, rectSize);
                 gl.clear(gl.COLOR_BUFFER_BIT);
-                gl.disable(gl.SCISSOR_TEST);
-                gl.enable(gl.SCISSOR_TEST);
+
+                // Clear the bottommost row
                 gl.scissor(0, gl.canvas.height - rectSize * (historyLength + 1), gl.canvas.width, rectSize);
                 gl.clear(gl.COLOR_BUFFER_BIT);
+
                 gl.disable(gl.SCISSOR_TEST);
 
                 if (!isPaused) {
@@ -635,6 +651,8 @@
 
                 gl.bindBuffer(gl.ARRAY_BUFFER, buffers.isDisk);
                 gl.bufferData(gl.ARRAY_BUFFER, isDisks.byteLength, gl.DYNAMIC_DRAW);
+
+                setupAttributes(); // Set up attributes once
 
                 animationFrameId = requestAnimationFrame(render);
             });
